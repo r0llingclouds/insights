@@ -185,12 +185,16 @@ def ask(
         max_tokens=max_output_tokens,
     )
 
-    console.print(resp.text)
+    console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
     if context.mode == ContextMode.RETRIEVAL and context.retrieved_chunks:
-        console.print("\nSources:")
+        console.print("\nSources:", markup=False, highlight=False)
         for rc in context.retrieved_chunks:
             title = rc.source.title or rc.source.locator
-            console.print(f"- {title} ({rc.source.locator}) chunk={rc.chunk_index}")
+            console.print(
+                f"- {title} ({rc.source.locator}) chunk={rc.chunk_index}",
+                markup=False,
+                highlight=False,
+            )
 
 
 @app.command()

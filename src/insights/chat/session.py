@@ -13,7 +13,7 @@ from insights.retrieval import ContextMode, build_context
 from insights.storage.db import Database
 from insights.storage.models import MessageRole, Source
 
-console = Console()
+console = Console(highlight=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,11 +236,15 @@ def run_chat(
                 usage=resp.usage,
             )
 
-            console.print(resp.text)
+            console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
             if context.mode == ContextMode.RETRIEVAL and context.retrieved_chunks:
-                console.print("\nSources:")
+                console.print("\nSources:", markup=False, highlight=False)
                 for rc in context.retrieved_chunks:
                     title = rc.source.title or rc.source.locator
-                    console.print(f"- {title} ({rc.source.locator}) chunk={rc.chunk_index}")
+                    console.print(
+                        f"- {title} ({rc.source.locator}) chunk={rc.chunk_index}",
+                        markup=False,
+                        highlight=False,
+                    )
 
 
