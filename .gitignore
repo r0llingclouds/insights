@@ -48,3 +48,5 @@ cache
 insights.db
 insights.db-shm
 insights.db-wal
+
+benchmarks.md
