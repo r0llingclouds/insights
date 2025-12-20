@@ -46,6 +46,7 @@ def _resolve_or_ingest_source(
 ) -> Source:
     existing = db.get_source_by_id(ref)
     if existing:
+        console.print(f"(cache) {existing.kind.value} {existing.locator}", markup=False, highlight=False)
         return existing
     result = ingest_source(
         db=db,
@@ -56,6 +57,12 @@ def _resolve_or_ingest_source(
         refresh=refresh,
         title=None,
     )
+    if result.reused_cache:
+        console.print(
+            f"(cache) {result.source.kind.value} {result.source.locator} (extractor={result.source_version.extractor})",
+            markup=False,
+            highlight=False,
+        )
     return result.source
 
 

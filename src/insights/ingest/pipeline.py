@@ -151,16 +151,13 @@ def _ingest_url_docling(
     extractor = "docling"
 
     if not refresh:
-        existing = db.get_latest_source_version(source_id=source.id, extractor=extractor)
-        if existing and existing.status == "ok":
-            doc_id = db.get_document_id_by_source_version(existing.id)
-            if doc_id:
-                return IngestResult(
-                    source=source,
-                    source_version=existing,
-                    document_id=doc_id,
-                    reused_cache=True,
-                )
+        cached = _reuse_any_cached_document(
+            db=db,
+            source=source,
+            extractor_preference=[extractor, "firecrawl"],
+        )
+        if cached is not None:
+            return cached
 
     try:
         markdown = extract_markdown_with_docling(url)
@@ -206,16 +203,13 @@ def _ingest_url_firecrawl(
     extractor = "firecrawl"
 
     if not refresh:
-        existing = db.get_latest_source_version(source_id=source.id, extractor=extractor)
-        if existing and existing.status == "ok":
-            doc_id = db.get_document_id_by_source_version(existing.id)
-            if doc_id:
-                return IngestResult(
-                    source=source,
-                    source_version=existing,
-                    document_id=doc_id,
-                    reused_cache=True,
-                )
+        cached = _reuse_any_cached_document(
+            db=db,
+            source=source,
+            extractor_preference=[extractor, "docling"],
+        )
+        if cached is not None:
+            return cached
 
     try:
         markdown = extract_markdown_with_firecrawl(url)
@@ -247,6 +241,30 @@ def _ingest_url_firecrawl(
             error=msg,
         )
         raise RuntimeError(msg) from e
+
+
+def _reuse_any_cached_document(
+    *,
+    db: Database,
+    source: Source,
+    extractor_preference: list[str],
+) -> IngestResult | None:
+    docs = db.get_documents_for_sources_latest(
+        source_ids=[source.id],
+        extractor_preference=extractor_preference,
+    )
+    if not docs:
+        return None
+    d = docs[0]
+    version = db.get_source_version_by_id(str(d["source_version_id"]))
+    if not version:
+        return None
+    return IngestResult(
+        source=source,
+        source_version=version,
+        document_id=str(d["document_id"]),
+        reused_cache=True,
+    )
 
 
 def _ingest_youtube_assemblyai(

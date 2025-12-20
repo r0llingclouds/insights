@@ -20,8 +20,28 @@ def is_url(value: str) -> bool:
 
 def canonicalize_url(url: str) -> str:
     parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    netloc = parsed.netloc.lower()
+    scheme = (parsed.scheme or "").lower()
+    if not scheme:
+        raise ValueError("URL must include a scheme (http/https)")
+
+    # Normalize internationalized domains to ASCII (punycode) so:
+    # - https://マリウス.com/... and https://xn--gckvb8fzb.com/... map to the same locator.
+    host = (parsed.hostname or "").rstrip(".")
+    if not host:
+        host = parsed.netloc.rstrip(".")
+    try:
+        host_ascii = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        host_ascii = host
+    host_ascii = host_ascii.lower()
+
+    port = parsed.port
+    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    if port and not default_port:
+        netloc = f"{host_ascii}:{port}"
+    else:
+        netloc = host_ascii
+
     path = parsed.path or "/"
     # Remove a single trailing slash for consistency (except root).
     if path != "/" and path.endswith("/"):

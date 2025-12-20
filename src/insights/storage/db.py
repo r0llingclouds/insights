@@ -204,6 +204,13 @@ class Database:
         ).fetchone()
         return _row_to_source_version(row) if row else None
 
+    def get_source_version_by_id(self, version_id: str) -> SourceVersion | None:
+        row = self._conn.execute(
+            "SELECT * FROM source_versions WHERE id = ?;",
+            (version_id,),
+        ).fetchone()
+        return _row_to_source_version(row) if row else None
+
     def get_source_version(self, *, source_id: str, content_hash: str, extractor: str) -> SourceVersion:
         row = self._conn.execute(
             """

@@ -24,6 +24,7 @@ app = typer.Typer(
 )
 
 console = Console(highlight=False)
+err_console = Console(stderr=True, highlight=False)
 
 
 @app.callback()
@@ -90,11 +91,19 @@ def ingest(
     finally:
         db.close()
 
+    if result.reused_cache:
+        err_console.print(
+            f"(cache) {result.source.kind.value} {result.source.locator} (extractor={result.source_version.extractor})",
+            markup=False,
+            highlight=False,
+        )
+
     console.print(
         {
             "source_id": result.source.id,
             "kind": result.source.kind.value,
             "locator": result.source.locator,
+            "extractor": result.source_version.extractor,
             "document_id": result.document_id,
             "reused_cache": result.reused_cache,
         }
@@ -371,6 +380,11 @@ def ask(
         for ref in source:
             existing = db.get_source_by_id(ref)
             if existing:
+                err_console.print(
+                    f"(cache) {existing.kind.value} {existing.locator}",
+                    markup=False,
+                    highlight=False,
+                )
                 source_ids.append(existing.id)
                 continue
             # Auto-ingest when not found by id.
@@ -383,6 +397,12 @@ def ask(
                 refresh=refresh_sources,
                 title=None,
             )
+            if ingested.reused_cache:
+                err_console.print(
+                    f"(cache) {ingested.source.kind.value} {ingested.source.locator} (extractor={ingested.source_version.extractor})",
+                    markup=False,
+                    highlight=False,
+                )
             source_ids.append(ingested.source.id)
 
         context = build_context(
