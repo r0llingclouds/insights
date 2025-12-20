@@ -420,6 +420,37 @@ class Database:
         ).fetchall()
         return [_row_to_conversation(r) for r in rows]
 
+    def list_conversation_summaries(
+        self, *, limit: int = 50, source_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        List conversations with message/source counts. Optionally filter to those
+        that include a given source_id.
+        """
+        params: list[Any] = []
+        where = ""
+        if source_id is not None:
+            where = "WHERE c.id IN (SELECT conversation_id FROM conversation_sources WHERE source_id = ?)"
+            params.append(source_id)
+
+        rows = self._conn.execute(
+            f"""
+            SELECT
+              c.id,
+              c.title,
+              c.created_at,
+              c.updated_at,
+              (SELECT COUNT(1) FROM conversation_sources cs WHERE cs.conversation_id = c.id) AS source_count,
+              (SELECT COUNT(1) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+            FROM conversations c
+            {where}
+            ORDER BY c.updated_at DESC
+            LIMIT ?;
+            """,
+            [*params, limit],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def set_conversation_title(self, conversation_id: str, title: str) -> None:
         with self.transaction():
             self._conn.execute(

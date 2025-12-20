@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import re
 from typing import Annotated
 
 import typer
@@ -11,6 +12,7 @@ from rich.table import Table
 from insights.config import resolve_paths
 from insights.chat.session import ChatRunConfig, run_chat
 from insights.ingest import IngestBackend, ingest as ingest_source
+from insights.ingest.detect import detect_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.retrieval import ContextMode, build_context
 from insights.storage.db import Database
@@ -159,6 +161,81 @@ def list_sources(
             s.title or "",
             s.locator,
             s.updated_at.isoformat(),
+        )
+    console.print(table)
+
+
+@app.command("conversations")
+def list_conversations(
+    ctx: typer.Context,
+    source: Annotated[
+        str | None,
+        typer.Option(
+            "--source",
+            "-s",
+            help="Filter to conversations that include this source (source id, path, or URL).",
+        ),
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", help="Max rows to show.")] = 50,
+    as_json: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
+) -> None:
+    """List conversations (optionally filtered by source)."""
+    source_ref = source.strip() if source else None
+
+    paths = ctx.obj["paths"]
+    db = Database.open(paths.db_path)
+    try:
+        source_id: str | None = None
+        if source_ref:
+            s = db.get_source_by_id(source_ref)
+            if s:
+                source_id = s.id
+            else:
+                # If it looks like an id but doesn't exist, fail fast.
+                if re.fullmatch(r"[0-9a-fA-F]{32}", source_ref):
+                    raise typer.BadParameter(f"Unknown source id: {source_ref}")
+                detected = detect_source(source_ref, forced_type="auto")
+                try:
+                    s = db.get_source_by_kind_locator(kind=detected.kind, locator=detected.locator)
+                except KeyError as e:
+                    raise typer.BadParameter(f"Unknown source: {source_ref}") from e
+                source_id = s.id
+
+        rows = db.list_conversation_summaries(limit=limit, source_id=source_id)
+    finally:
+        db.close()
+
+    if as_json:
+        console.print(
+            [
+                {
+                    "id": r["id"],
+                    "title": r["title"],
+                    "created_at": r["created_at"],
+                    "updated_at": r["updated_at"],
+                    "source_count": r["source_count"],
+                    "message_count": r["message_count"],
+                }
+                for r in rows
+            ],
+            markup=False,
+            highlight=False,
+        )
+        return
+
+    table = Table(title=f"Conversations ({len(rows)})", show_lines=False)
+    table.add_column("id", no_wrap=True)
+    table.add_column("title")
+    table.add_column("messages", justify="right", no_wrap=True)
+    table.add_column("sources", justify="right", no_wrap=True)
+    table.add_column("updated_at", no_wrap=True)
+    for r in rows:
+        table.add_row(
+            str(r["id"]),
+            str(r["title"] or ""),
+            str(r["message_count"]),
+            str(r["source_count"]),
+            str(r["updated_at"]),
         )
     console.print(table)
 
