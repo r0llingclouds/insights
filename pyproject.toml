@@ -1,7 +1,35 @@
 [project]
 name = "insights"
 version = "0.1.0"
-description = "Add your description here"
+description = "Terminal app to ingest PDFs/URLs/YouTube into cached text and chat/Q&A over sources."
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+  "docling",
+  "httpx",
+  "prompt_toolkit",
+  "pydantic",
+  "python-dotenv",
+  "rich",
+  "typer",
+  "yt-dlp",
+  "assemblyai",
+  "firecrawl-py",
+]
+
+[project.scripts]
+insights = "insights.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/insights"]
+
+[project.optional-dependencies]
+dev = [
+  "mypy",
+  "pytest",
+  "ruff",
+]
