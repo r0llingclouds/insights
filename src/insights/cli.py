@@ -177,6 +177,15 @@ def list_conversations(
         ),
     ] = None,
     limit: Annotated[int, typer.Option("--limit", help="Max rows to show.")] = 50,
+    sources_limit: Annotated[
+        int,
+        typer.Option("--sources-limit", help="Max sources to show (when not filtering by --source)."),
+    ] = 100,
+    excerpt_chars: Annotated[
+        int,
+        typer.Option("--excerpt-chars", help="Max characters to show from the first user message."),
+    ] = 96,
+    flat: Annotated[bool, typer.Option("--flat", help="Show a flat conversation summary table.")] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
 ) -> None:
     """List conversations (optionally filtered by source)."""
@@ -186,10 +195,12 @@ def list_conversations(
     db = Database.open(paths.db_path)
     try:
         source_id: str | None = None
+        source_obj = None
         if source_ref:
             s = db.get_source_by_id(source_ref)
             if s:
                 source_id = s.id
+                source_obj = s
             else:
                 # If it looks like an id but doesn't exist, fail fast.
                 if re.fullmatch(r"[0-9a-fA-F]{32}", source_ref):
@@ -200,44 +211,124 @@ def list_conversations(
                 except KeyError as e:
                     raise typer.BadParameter(f"Unknown source: {source_ref}") from e
                 source_id = s.id
+                source_obj = s
 
-        rows = db.list_conversation_summaries(limit=limit, source_id=source_id)
+        if flat:
+            rows = db.list_conversation_summaries(limit=limit, source_id=source_id)
+        else:
+            if source_obj is not None:
+                sources = [source_obj]
+            else:
+                sources = db.list_sources(limit=sources_limit)
     finally:
         db.close()
 
-    if as_json:
-        console.print(
-            [
-                {
-                    "id": r["id"],
-                    "title": r["title"],
-                    "created_at": r["created_at"],
-                    "updated_at": r["updated_at"],
-                    "source_count": r["source_count"],
-                    "message_count": r["message_count"],
-                }
-                for r in rows
-            ],
-            markup=False,
-            highlight=False,
-        )
+    def _excerpt(text: str | None) -> str:
+        if not text:
+            return ""
+        collapsed = " ".join(str(text).split())
+        if len(collapsed) <= excerpt_chars:
+            return collapsed
+        return collapsed[: max(0, excerpt_chars - 1)].rstrip() + "…"
+
+    if flat:
+        if as_json:
+            console.print(
+                [
+                    {
+                        "id": r["id"],
+                        "title": r["title"],
+                        "created_at": r["created_at"],
+                        "updated_at": r["updated_at"],
+                        "source_count": r["source_count"],
+                        "message_count": r["message_count"],
+                    }
+                    for r in rows
+                ],
+                markup=False,
+                highlight=False,
+            )
+            return
+
+        table = Table(title=f"Conversations ({len(rows)})", show_lines=False)
+        table.add_column("id", no_wrap=True)
+        table.add_column("title")
+        table.add_column("messages", justify="right", no_wrap=True)
+        table.add_column("sources", justify="right", no_wrap=True)
+        table.add_column("updated_at", no_wrap=True)
+        for r in rows:
+            table.add_row(
+                str(r["id"]),
+                str(r["title"] or ""),
+                str(r["message_count"]),
+                str(r["source_count"]),
+                str(r["updated_at"]),
+            )
+        console.print(table)
         return
 
-    table = Table(title=f"Conversations ({len(rows)})", show_lines=False)
-    table.add_column("id", no_wrap=True)
-    table.add_column("title")
-    table.add_column("messages", justify="right", no_wrap=True)
-    table.add_column("sources", justify="right", no_wrap=True)
-    table.add_column("updated_at", no_wrap=True)
-    for r in rows:
-        table.add_row(
-            str(r["id"]),
-            str(r["title"] or ""),
-            str(r["message_count"]),
-            str(r["source_count"]),
-            str(r["updated_at"]),
-        )
-    console.print(table)
+    # Grouped by source (default)
+    paths = ctx.obj["paths"]
+    db = Database.open(paths.db_path)
+    try:
+        out_json = []
+        for s in sources:
+            convs = db.list_conversations_for_source(source_id=s.id, limit=limit)
+            display_locator = s.locator
+            if s.kind == SourceKind.YOUTUBE:
+                display_locator = f"https://www.youtube.com/watch?v={s.locator}"
+
+            header = f"{s.kind.value}  {s.title or ''}".rstrip()
+            console.print(f"\nSource: {header}", markup=False, highlight=False)
+            console.print(f"Locator: {display_locator}", markup=False, highlight=False)
+
+            if as_json:
+                out_json.append(
+                    {
+                        "source": {
+                            "id": s.id,
+                            "kind": s.kind.value,
+                            "title": s.title,
+                            "locator": s.locator,
+                            "display_locator": display_locator,
+                        },
+                        "conversations": [
+                            {
+                                "id": c["conversation_id"],
+                                "title": c["conversation_title"],
+                                "updated_at": c["conversation_updated_at"],
+                                "message_count": c["message_count"],
+                                "first_user_message_excerpt": _excerpt(c.get("first_user_message")),
+                            }
+                            for c in convs
+                        ],
+                    }
+                )
+                continue
+
+            if not convs:
+                console.print("Conversations: (none)", markup=False, highlight=False)
+                continue
+
+            table = Table(show_lines=False)
+            table.add_column("conversation_id", no_wrap=True)
+            table.add_column("title")
+            table.add_column("first_user_message")
+            table.add_column("messages", justify="right", no_wrap=True)
+            table.add_column("updated_at", no_wrap=True)
+            for c in convs:
+                table.add_row(
+                    str(c["conversation_id"]),
+                    str(c["conversation_title"] or ""),
+                    _excerpt(c.get("first_user_message")),
+                    str(c["message_count"]),
+                    str(c["conversation_updated_at"]),
+                )
+            console.print(table)
+        if as_json:
+            console.print(out_json, markup=False, highlight=False)
+    finally:
+        db.close()
 
 
 @app.command()

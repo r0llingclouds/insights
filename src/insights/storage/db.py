@@ -451,6 +451,43 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def list_conversations_for_source(
+        self,
+        *,
+        source_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        List conversations bound to a given source, including the first user message.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT
+              c.id AS conversation_id,
+              c.title AS conversation_title,
+              c.created_at AS conversation_created_at,
+              c.updated_at AS conversation_updated_at,
+              (SELECT m.content
+                 FROM messages m
+                WHERE m.conversation_id = c.id AND m.role = 'user'
+                ORDER BY m.created_at ASC
+                LIMIT 1) AS first_user_message,
+              (SELECT m.created_at
+                 FROM messages m
+                WHERE m.conversation_id = c.id AND m.role = 'user'
+                ORDER BY m.created_at ASC
+                LIMIT 1) AS first_user_created_at,
+              (SELECT COUNT(1) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+            FROM conversation_sources cs
+            JOIN conversations c ON c.id = cs.conversation_id
+            WHERE cs.source_id = ?
+            ORDER BY c.updated_at DESC
+            LIMIT ?;
+            """,
+            (source_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def set_conversation_title(self, conversation_id: str, title: str) -> None:
         with self.transaction():
             self._conn.execute(
