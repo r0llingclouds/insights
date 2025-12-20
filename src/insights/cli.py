@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from insights.config import resolve_paths
 from insights.chat.session import ChatRunConfig, run_chat
@@ -13,13 +14,14 @@ from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.retrieval import ContextMode, build_context
 from insights.storage.db import Database
+from insights.storage.models import SourceKind
 
 app = typer.Typer(
     add_completion=False,
     help="Ingest sources into cached text, then chat/Q&A over them.",
 )
 
-console = Console()
+console = Console(highlight=False)
 
 
 @app.callback()
@@ -95,6 +97,70 @@ def ingest(
             "reused_cache": result.reused_cache,
         }
     )
+
+
+@app.command("sources")
+def list_sources(
+    ctx: typer.Context,
+    kind: Annotated[
+        str | None,
+        typer.Option("--kind", help="Filter by kind: file|url|youtube"),
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", help="Max rows to show.")] = 100,
+    as_json: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
+) -> None:
+    """List ingested sources stored in the database."""
+    kind_norm = kind.strip().lower() if kind else None
+    kind_enum: SourceKind | None = None
+    if kind_norm:
+        try:
+            kind_enum = SourceKind(kind_norm)
+        except Exception as e:
+            raise typer.BadParameter("kind must be one of: file, url, youtube") from e
+
+    paths = ctx.obj["paths"]
+    db = Database.open(paths.db_path)
+    try:
+        sources = db.list_sources(limit=limit)
+    finally:
+        db.close()
+
+    if kind_enum is not None:
+        sources = [s for s in sources if s.kind == kind_enum]
+
+    if as_json:
+        console.print(
+            [
+                {
+                    "id": s.id,
+                    "kind": s.kind.value,
+                    "title": s.title,
+                    "locator": s.locator,
+                    "created_at": s.created_at.isoformat(),
+                    "updated_at": s.updated_at.isoformat(),
+                }
+                for s in sources
+            ],
+            markup=False,
+            highlight=False,
+        )
+        return
+
+    table = Table(title=f"Sources ({len(sources)})", show_lines=False)
+    table.add_column("id", no_wrap=True)
+    table.add_column("kind", no_wrap=True)
+    table.add_column("title")
+    table.add_column("locator")
+    table.add_column("updated_at", no_wrap=True)
+    for s in sources:
+        table.add_row(
+            s.id,
+            s.kind.value,
+            s.title or "",
+            s.locator,
+            s.updated_at.isoformat(),
+        )
+    console.print(table)
 
 
 @app.command()
