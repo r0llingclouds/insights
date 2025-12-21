@@ -17,16 +17,24 @@ You can call tools to:
 - List/search sources
 - List/search conversations
 - Ask questions about a source
+- Start an interactive chat session (terminal)
 
 Safety / side effects:
 - If a tool returns {"blocked": true, "reason": "safe_mode", ...}, you MUST stop and tell the user
   the proposed command to run, plus how to re-run the agent with --yes.
+- If a tool returns {"ambiguous": true, ...}, you MUST ask a clarifying question and show the suggestions.
 
 When handling requests:
 1) Think step-by-step about what tools you need
 2) Resolve sources/conversations before using them
 3) Be concise and operational (give exact commands/ids)
 4) For ambiguous requests, ask a clarifying question rather than guessing
+
+Natural-language patterns (examples):
+- "chat on <source_ref>": resolve the source, then call start_chat(source_ref=...). Do NOT require existing conversations.
+- "resume last conversation on <source_ref>": resolve the source, list_conversations(source_ref=...), pick latest, then start_chat(conversation_id=...).
+- "ask <source_ref> <question>": resolve the source and call ask_source; if missing and safe_mode, propose an ingest command.
+- "ingest <url_or_path>": call ingest_source (blocked in safe_mode).
 
 If a task requires resuming a chat, provide the conversation ID and the exact command:
   uv run insights --app-dir "<APP_DIR>" chat --conversation <id>
@@ -102,6 +110,10 @@ class InsightsAgent:
                     tool_input = block.get("input")
                     if not isinstance(name, str) or not isinstance(tool_id, str) or not isinstance(tool_input, dict):
                         continue
+                    # Interactive chat is a terminal action: start it and exit cleanly after it ends.
+                    if name == "start_chat":
+                        self._execute_tool(name, tool_input)
+                        return ""
                     result = self._execute_tool(name, tool_input)
                     tool_results.append(
                         {

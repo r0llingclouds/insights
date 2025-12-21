@@ -8,11 +8,12 @@ from typing import Any, Literal
 
 from insights.config import Paths
 from insights.ingest import IngestBackend, ingest as ingest_source
-from insights.ingest.detect import detect_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.retrieval import build_context
 from insights.storage.db import Database
 from insights.storage.models import Source, SourceKind
+from insights.agent.resolve import resolve_source as resolve_source_any
+from insights.chat.session import ChatRunConfig, run_chat
 
 
 Provider = Literal["openai", "anthropic"]
@@ -50,38 +51,12 @@ def _pick_llm(provider: Provider, model: str | None):
     raise ValueError("provider must be 'openai' or 'anthropic'")
 
 
-def _resolve_source_ref(db: Database, ref: str) -> Source | None:
-    ref = ref.strip()
-    if not ref:
-        return None
+def _looks_like_url(value: str) -> bool:
+    return value.startswith(("http://", "https://"))
 
-    if _is_hex_id(ref):
-        return db.get_source_by_id(ref)
 
-    # Try URL / YouTube URL
-    if ref.startswith(("http://", "https://")):
-        detected = detect_source(ref, forced_type="auto")
-        try:
-            return db.get_source_by_kind_locator(kind=detected.kind, locator=detected.locator)
-        except KeyError:
-            return None
-
-    # Try a raw YouTube video id (common convenience)
-    if re.fullmatch(r"[A-Za-z0-9_-]{6,16}", ref):
-        try:
-            return db.get_source_by_kind_locator(kind=SourceKind.YOUTUBE, locator=ref)
-        except KeyError:
-            pass
-
-    # Fall back to file path
-    try:
-        detected = detect_source(ref, forced_type="file")
-        try:
-            return db.get_source_by_kind_locator(kind=detected.kind, locator=detected.locator)
-        except KeyError:
-            return None
-    except Exception:
-        return None
+def _looks_like_path(value: str) -> bool:
+    return ("/" in value) or ("\\" in value) or value.startswith(("~", "./", "../"))
 
 
 def _proposed_ingest_command(*, app_dir: Path, source: str, backend: str | None, refresh: bool, title: str | None) -> str:
@@ -163,6 +138,10 @@ class ToolRunner:
             if has_description:
                 like_clauses.append("lower(coalesce(description,'')) LIKE ?")
                 params.append(like)
+            # Basename match for file sources (handles queries like 'onepager.pdf')
+            like_clauses.append("(kind = 'file' AND (lower(locator) LIKE ? OR lower(locator) LIKE ?))")
+            params.append(f"%/{q.lower()}")
+            params.append(f"%\\\\{q.lower()}")
 
             where.append("(" + " OR ".join(like_clauses) + ")")
 
@@ -223,15 +202,23 @@ class ToolRunner:
     def resolve_source(self, *, ref: str) -> dict[str, Any]:
         db = Database.open(self._ctx.paths.db_path)
         try:
-            s = _resolve_source_ref(db, ref)
+            resolved = resolve_source_any(db=db, ref=ref, suggestions_limit=5)
         finally:
             db.close()
 
-        if s is None:
-            # Provide fuzzy suggestions (small limit) to help the model.
-            suggestions = self.find_sources(text=ref, limit=5).get("matches", [])
-            return {"success": True, "found": False, "ref": ref, "suggestions": suggestions}
-        return {"success": True, "found": True, "source": _source_to_dict(s)}
+        if resolved.found and resolved.source:
+            return {"success": True, "found": True, "source": _source_to_dict(resolved.source)}
+        if resolved.ambiguous:
+            return {
+                "success": True,
+                "found": False,
+                "ambiguous": True,
+                "ref": ref,
+                "suggestions": [_source_to_dict(s) for s in resolved.suggestions],
+            }
+        # Not found; provide fuzzy suggestions (small limit) to help the model.
+        suggestions = self.find_sources(text=ref, limit=5).get("matches", [])
+        return {"success": True, "found": False, "ref": ref, "suggestions": suggestions}
 
     def list_conversations(self, *, source_ref: str | None = None, limit: int = 10) -> dict[str, Any]:
         lim = max(1, min(int(limit), 50))
@@ -240,12 +227,18 @@ class ToolRunner:
         if source_ref:
             db = Database.open(self._ctx.paths.db_path)
             try:
-                s = _resolve_source_ref(db, source_ref)
+                resolved = resolve_source_any(db=db, ref=source_ref, suggestions_limit=5)
             finally:
                 db.close()
-            if not s:
+            if resolved.ambiguous:
+                return {
+                    "success": True,
+                    "ambiguous": True,
+                    "suggestions": [_source_to_dict(s) for s in resolved.suggestions],
+                }
+            if not (resolved.found and resolved.source):
                 return {"success": True, "conversations": [], "count": 0, "note": "source not found"}
-            source_id = s.id
+            source_id = resolved.source.id
 
         import sqlite3
 
@@ -317,15 +310,21 @@ class ToolRunner:
                 # Resolve source_ref to source_id.
                 db = Database.open(self._ctx.paths.db_path)
                 try:
-                    s = _resolve_source_ref(db, source_ref)
+                    resolved = resolve_source_any(db=db, ref=source_ref, suggestions_limit=5)
                 finally:
                     db.close()
-                if not s:
+                if resolved.ambiguous:
+                    return {
+                        "success": True,
+                        "ambiguous": True,
+                        "suggestions": [_source_to_dict(s) for s in resolved.suggestions],
+                    }
+                if not (resolved.found and resolved.source):
                     return {"success": True, "matches": [], "match_count": 0, "note": "source not found"}
                 where.append(
                     "c.id IN (SELECT conversation_id FROM conversation_sources WHERE source_id = ?)"
                 )
-                params.append(s.id)
+                params.append(resolved.source.id)
 
             like = f"%{q.lower()}%"
             where.append(
@@ -390,6 +389,124 @@ class ToolRunner:
             },
             "sources": [_source_to_dict(s) for s in sources],
         }
+
+    def start_chat(
+        self,
+        *,
+        source_ref: str | None = None,
+        conversation_id: str | None = None,
+        provider: Provider = "openai",
+        model: str | None = None,
+        backend: str | None = None,
+        refresh_sources: bool = False,
+        max_context_tokens: int = 12000,
+        max_output_tokens: int = 800,
+        temperature: float = 0.2,
+    ) -> dict[str, Any]:
+        """
+        Start or resume an interactive chat session.
+
+        - If conversation_id is provided: resumes that conversation.
+        - Else: resolves source_ref (id/url/path/title/basename) and starts a new chat on that source.
+        - If source_ref isn't found and looks like a URL/path, this may ingest depending on allow_side_effects.
+        """
+        conv_id = (conversation_id or "").strip() or None
+        ref = (source_ref or "").strip() or None
+        if not conv_id and not ref:
+            return {"success": False, "error": "Provide conversation_id or source_ref"}
+
+        backend_enum = IngestBackend.DOCLING
+        if backend:
+            backend_enum = IngestBackend(backend.strip().lower())
+
+        db = Database.open(self._ctx.paths.db_path)
+        try:
+            if conv_id:
+                run_chat(
+                    db=db,
+                    cache_dir=self._ctx.paths.cache_dir,
+                    conversation_id=conv_id,
+                    sources=[],
+                    config=ChatRunConfig(
+                        provider=provider,
+                        model=model,
+                        backend=backend_enum,
+                        refresh_sources=bool(refresh_sources),
+                        max_context_tokens=int(max_context_tokens),
+                        max_output_tokens=int(max_output_tokens),
+                        temperature=float(temperature),
+                    ),
+                )
+                return {"success": True, "started": True, "conversation_id": conv_id}
+
+            # Resolve a source ref first; this supports id/url/path/title/basename.
+            resolved = resolve_source_any(db=db, ref=ref or "", suggestions_limit=5)
+            if resolved.ambiguous:
+                return {
+                    "success": True,
+                    "ambiguous": True,
+                    "ref": ref,
+                    "suggestions": [_source_to_dict(s) for s in resolved.suggestions],
+                }
+            if resolved.found and resolved.source:
+                # Prefer using internal id so chat doesn't depend on filesystem paths.
+                run_chat(
+                    db=db,
+                    cache_dir=self._ctx.paths.cache_dir,
+                    conversation_id=None,
+                    sources=[resolved.source.id],
+                    config=ChatRunConfig(
+                        provider=provider,
+                        model=model,
+                        backend=backend_enum,
+                        refresh_sources=bool(refresh_sources),
+                        max_context_tokens=int(max_context_tokens),
+                        max_output_tokens=int(max_output_tokens),
+                        temperature=float(temperature),
+                    ),
+                )
+                return {"success": True, "started": True, "source": _source_to_dict(resolved.source)}
+
+            # Not found. If it looks like a URL/path, we can ingest by passing it to chat,
+            # but that is a side effect.
+            if ref and (_looks_like_url(ref) or _looks_like_path(ref)):
+                if not self._ctx.allow_side_effects:
+                    proposed = _proposed_ingest_command(
+                        app_dir=self._ctx.paths.app_dir,
+                        source=ref,
+                        backend=backend_enum.value,
+                        refresh=bool(refresh_sources),
+                        title=None,
+                    )
+                    return {
+                        "success": False,
+                        "blocked": True,
+                        "reason": "safe_mode",
+                        "note": "Source not found locally. Ingest is required before starting chat.",
+                        "proposed_command": proposed,
+                    }
+                run_chat(
+                    db=db,
+                    cache_dir=self._ctx.paths.cache_dir,
+                    conversation_id=None,
+                    sources=[ref],
+                    config=ChatRunConfig(
+                        provider=provider,
+                        model=model,
+                        backend=backend_enum,
+                        refresh_sources=bool(refresh_sources),
+                        max_context_tokens=int(max_context_tokens),
+                        max_output_tokens=int(max_output_tokens),
+                        temperature=float(temperature),
+                    ),
+                )
+                return {"success": True, "started": True, "source_ref": ref}
+
+            # Otherwise: ask for clarification by returning suggestions (if any).
+            suggestions = self.find_sources(text=ref or "", limit=5).get("matches", [])
+            return {"success": True, "found": False, "ref": ref, "suggestions": suggestions}
+        finally:
+            db.close()
 
     def ingest_source(
         self,
@@ -492,8 +609,16 @@ class ToolRunner:
 
         db = Database.open(self._ctx.paths.db_path)
         try:
-            src = _resolve_source_ref(db, source_ref)
-            if not src:
+            resolved = resolve_source_any(db=db, ref=source_ref, suggestions_limit=5)
+            if resolved.ambiguous:
+                return {
+                    "success": True,
+                    "ambiguous": True,
+                    "suggestions": [_source_to_dict(s) for s in resolved.suggestions],
+                }
+
+            src = resolved.source if (resolved.found and resolved.source) else None
+            if src is None:
                 if not self._ctx.allow_side_effects:
                     proposed = _proposed_ingest_command(
                         app_dir=self._ctx.paths.app_dir,
@@ -594,6 +719,7 @@ class ToolRunner:
             "list_conversations": self.list_conversations,
             "search_conversations": self.search_conversations,
             "get_conversation_info": self.get_conversation_info,
+            "start_chat": self.start_chat,
             "ingest_source": self.ingest_source,
             "ask_source": self.ask_source,
         }.get(name)
@@ -684,6 +810,24 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"conversation_id": {"type": "string", "description": "Conversation id"}},
             "required": ["conversation_id"],
+        },
+    },
+    {
+        "name": "start_chat",
+        "description": "Start or resume an interactive chat session. Use source_ref to start a new chat on a source, or conversation_id to resume.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_ref": {"type": "string", "description": "Source reference (id/url/path/title/basename)"},
+                "conversation_id": {"type": "string", "description": "Conversation id to resume"},
+                "provider": {"type": "string", "enum": ["openai", "anthropic"], "description": "LLM provider for chat"},
+                "model": {"type": "string", "description": "Model override"},
+                "backend": {"type": "string", "enum": ["docling", "firecrawl"], "description": "URL backend when ingesting"},
+                "refresh_sources": {"type": "boolean", "description": "Force re-ingestion for provided sources"},
+                "max_context_tokens": {"type": "integer", "description": "Context budget"},
+                "max_output_tokens": {"type": "integer", "description": "Max output tokens"},
+                "temperature": {"type": "number", "description": "Sampling temperature"},
+            },
         },
     },
     {
