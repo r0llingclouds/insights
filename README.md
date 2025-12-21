@@ -41,6 +41,29 @@ export FIRECRAWL_API_KEY="..."
 
 Optional: you can also store them in a `.env` file in your **current directory** or inside your **app dir** (e.g. `/tmp/insights-test/.env`).
 
+### Global options (apply to all commands)
+
+- `--app-dir PATH`: app directory (DB + cache). Default: `~/.insights/`
+- `--db PATH`: explicit DB file path (overrides app dir DB)
+- `--verbose`: enable debug logging
+
+Agent-related global options:
+- `--yes`: allow side effects for natural-language agent queries (ingest + export-to-file)
+- `--agent-model MODEL` (default `claude-sonnet-4-20250514`)
+- `--agent-max-steps N` (default 10)
+- `--agent-verbose`
+
+Important: `--yes` is a **global** flag, so it must appear **before** the quoted query (or before `do`).
+
+### Source references (how to refer to a source)
+
+Many commands accept a “source ref”, which can be:
+- **source id**: `830eb7dfaaac428a87fb2dae2e80a2a5`
+- **URL**: `https://example.com/article`
+- **YouTube URL**: `https://www.youtube.com/watch?v=VIDEO_ID` (internally stored as video id)
+- **local file path**: `/Users/tirso.lopez/Desktop/onepager.pdf`
+- **basename / title fragment**: `onepager.pdf` (if ambiguous, you’ll be prompted to pick one)
+
 ### Natural-language agent (Anthropic tool-use)
 
 You can run complex requests as a single quoted query:
@@ -60,11 +83,14 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" do "resume last conversation on ht
 Notes:
 - The agent requires `ANTHROPIC_API_KEY` (it orchestrates via Anthropic tool-use, even if Q&A uses another provider).
 - By default the agent runs in **safe mode** (no ingestion / network writes). If ingestion is needed, it prints the exact command to run.
-- To allow the agent to ingest automatically, add `--yes`:
+- To allow the agent to ingest and export-to-file automatically, add `--yes` (and remember it must appear **before** the quoted query):
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "ingest https://www.youtube.com/watch?v=zPMPqzjM0Fw"
 uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "ask https://www.youtube.com/watch?v=zPMPqzjM0Fw what is this about?"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "chat on 830eb7dfaaac428a87fb2dae2e80a2a5"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "export transcript for https://www.youtube.com/watch?v=zPMPqzjM0Fw"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "export text for https://karpathy.bearblog.dev/year-in-review-2025/"
 ```
 
 Agent tuning:
@@ -77,11 +103,24 @@ Agent tuning:
 Insights stores an LLM-generated one-liner description for each source (`sources.description`) to support lightweight “semantic search” without vectors.
 
 - Descriptions are generated on ingest (best-effort; ingestion never fails if description generation fails).
+- Optional: override the default description model:
+
+```bash
+export INSIGHTS_DESCRIBE_MODEL="claude-sonnet-4-20250514"
+```
+
 - To backfill missing descriptions for existing sources:
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" describe backfill
 ```
+
+Backfill options:
+- `--limit N`
+- `--force`
+- `--provider openai|anthropic`
+- `--model MODEL`
+- `--max-content-chars N`
 
 ### Source titles (auto-generate when missing)
 
@@ -98,6 +137,13 @@ export INSIGHTS_TITLE_MODEL="claude-sonnet-4-20250514"
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" title backfill
 ```
+
+Backfill options:
+- `--limit N`
+- `--force`
+- `--provider openai|anthropic`
+- `--model MODEL`
+- `--max-content-chars N`
 
 ### Commands
 
@@ -133,6 +179,12 @@ Force re-ingestion:
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest /path/to/file.pdf --refresh
 ```
 
+Ingest options:
+- `--type auto|file|url|youtube`
+- `--backend docling|firecrawl` (URLs)
+- `--refresh`
+- `--title "..."` (optional title override)
+
 #### List sources stored in the DB
 
 ```bash
@@ -152,6 +204,12 @@ JSON output:
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --json
 ```
+
+Sources options:
+- `--kind file|url|youtube`
+- `--limit N`
+- `--json` (includes `description`)
+- `--show-description` (table view; truncated)
 
 #### One-off Q&A (`ask`)
 
@@ -192,6 +250,16 @@ Force retrieval mode (FTS5) for testing by making the context budget tiny:
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "What does it say about pricing?" --max-context-tokens 50
 ```
 
+Ask options:
+- `-s/--source` (repeatable)
+- `--provider openai|anthropic`
+- `--model MODEL`
+- `--backend docling|firecrawl` (when auto-ingesting URLs)
+- `--refresh-sources`
+- `--max-context-tokens N`
+- `--max-output-tokens N`
+- `--temperature FLOAT`
+
 #### Interactive chat (persistent)
 
 Start a new chat with a source:
@@ -219,6 +287,17 @@ Resume a conversation (use the id printed as `New conversation: ...`):
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" chat --conversation <conversation_id>
 ```
+
+Chat options:
+- `-s/--source` (repeatable)
+- `--conversation <conversation_id>`
+- `--provider openai|anthropic`
+- `--model MODEL`
+- `--backend docling|firecrawl` (when auto-ingesting URLs)
+- `--refresh-sources`
+- `--max-context-tokens N`
+- `--max-output-tokens N`
+- `--temperature FLOAT`
 
 #### List conversations (grouped by source)
 
@@ -249,6 +328,14 @@ Old flat summary table:
 uv run insights --app-dir "$INSIGHTS_APP_DIR" conversations --flat
 ```
 
+Conversations options:
+- `--source <source_ref>`
+- `--limit N`
+- `--sources-limit N`
+- `--excerpt-chars N`
+- `--flat`
+- `--json`
+
 #### Export plain text / transcript (and markdown) to files
 
 Export the cached **markdown** to a `.md` file under `~/Downloads` by default (falls back to plain text/transcript if markdown is not available):
@@ -270,7 +357,8 @@ Options:
 - `--backend docling|firecrawl` (when ingesting URLs)
 - `--refresh` (force re-ingest)
 - `--name NAME` (override the output filename base)
-- `--no-markdown` (disable markdown export)\n+- `--include-plain` (also write a `.txt` file)
+- `--include-plain` (also write a `.txt` file)
+- `--no-markdown` (disable markdown export; combine with `--include-plain` if you still want output)
 
 ### Inspecting the DB directly (sqlite3)
 
