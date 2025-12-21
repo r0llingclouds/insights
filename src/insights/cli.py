@@ -354,7 +354,10 @@ def summary_backfill(
     model: Annotated[str | None, typer.Option("--model", help="Model override.")] = None,
     max_content_chars: Annotated[
         int,
-        typer.Option("--max-content-chars", help="Max characters from source text to send to the LLM."),
+        typer.Option(
+            "--max-content-chars",
+            help="Chunk size (chars) used for whole-document map-reduce summarization.",
+        ),
     ] = 12000,
 ) -> None:
     """

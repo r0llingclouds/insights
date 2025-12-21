@@ -153,15 +153,25 @@ Backfill options:
 
 ### Summaries (per source version)
 
-Each extraction (`source_versions`) now stores a best-effort bullet summary (`source_versions.summary`) to improve recall.
+Each extraction (`source_versions`) stores a bullet summary (`source_versions.summary`) to improve recall.
 
-- Optional: override the default summary model:
+Important: summaries are generated from the **entire document/transcript**.
+
+- If the content is small: single-pass summary over the whole text.
+- If the content is large: **chunked map-reduce** (summarize all chunks, then reduce).
+
+Optional: override the default summary model:
 
 ```bash
 export INSIGHTS_SUMMARY_MODEL="claude-sonnet-4-20250514"
 ```
 
-- Backfill missing summaries:
+Optional tuning (whole-doc map-reduce):
+- `INSIGHTS_SUMMARY_CHUNK_CHARS` (default: `12000` unless overridden by `--max-content-chars`)
+- `INSIGHTS_SUMMARY_OVERLAP_CHARS` (default: `400`)
+- `INSIGHTS_SUMMARY_REDUCE_BATCH_SIZE` (default: `10`)
+
+Backfill missing summaries:
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" summary backfill
@@ -172,11 +182,19 @@ Backfill options:
 - `--force`
 - `--provider openai|anthropic`
 - `--model MODEL`
-- `--max-content-chars N`
+- `--max-content-chars N` (chunk size; the whole doc is still covered)
 
 ### Large document optimization (auto-switch to Haiku)
 
-When generating **summaries**, **descriptions**, or **titles**, if the source content exceeds **10,000 characters**, Insights automatically uses **`claude-haiku-4-5-20251001`** (cheaper) for that generation.\n\nOverrides:\n- If you set one of the model env vars (`INSIGHTS_SUMMARY_MODEL`, `INSIGHTS_DESCRIBE_MODEL`, `INSIGHTS_TITLE_MODEL`), that model is always used (no auto-switch).\n- You can change the cutoff:\n+\n+```bash\n+export INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS=10000\n+```
+When generating **summaries**, **descriptions**, or **titles**, if the source content exceeds **10,000 characters**, Insights automatically uses **`claude-haiku-4-5-20251001`** (cheaper) for that generation.
+
+Overrides:
+- If you set one of the model env vars (`INSIGHTS_SUMMARY_MODEL`, `INSIGHTS_DESCRIBE_MODEL`, `INSIGHTS_TITLE_MODEL`), that model is always used (no auto-switch).
+- You can change the cutoff:
+
+```bash
+export INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS=10000
+```
 
 ### Commands
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from click.testing import CliRunner
+from typer.testing import CliRunner
 
 
 def test_root_routes_quoted_query_to_do_help(tmp_path: Path) -> None:

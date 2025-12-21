@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from insights.llm import ChatMessage
+from insights.summarize import MAP_SYSTEM, REDUCE_SYSTEM, SUMMARY_SYSTEM, _LLM, _parse_bullets, chunk_text, map_reduce_summary
+
+
+def test_parse_bullets_joins_wrapped_lines() -> None:
+    raw = "- first line\ncontinued\n- second\n  wrapped too\n- third"
+    items = _parse_bullets(raw, max_bullets=10)
+    assert items == ["first line continued", "second wrapped too", "third"]
+
+
+def test_chunk_text_raw_slicing_overlap() -> None:
+    # Force raw slicing path by providing a single paragraph (no double newlines).
+    text = "".join(chr(ord("a") + (i % 26)) for i in range(0, 200))
+    chunks = chunk_text(text, chunk_chars=50, overlap_chars=10)
+    assert chunks
+    # Consecutive chunks should overlap by exactly overlap_chars under raw slicing.
+    for a, b in zip(chunks, chunks[1:], strict=False):
+        assert a[-10:] == b[:10]
+    # Ensure coverage: the last character of the original text appears somewhere.
+    assert text[-1] in chunks[-1]
+
+
+def test_chunk_text_paragraphs_covers_all_markers() -> None:
+    # Paragraph-aware chunking should not drop content.
+    paras = [f"PARA{i} " + ("x" * 50) for i in range(10)]
+    text = "\n\n".join(paras)
+    chunks = chunk_text(text, chunk_chars=120, overlap_chars=40)
+    assert len(chunks) >= 2
+    for i in range(10):
+        assert any(f"PARA{i}" in c for c in chunks)
+
+
+@dataclass
+class _Recorder:
+    calls: list[str]
+
+    def generate(self, messages: list[ChatMessage], used_model: str, max_tokens: int) -> str:
+        sys = messages[0].content
+        user = messages[1].content
+        if sys == MAP_SYSTEM:
+            # Return one bullet per chunk with its index.
+            prefix = "Chunk "
+            i = int(user[user.index(prefix) + len(prefix) :].split("/", 1)[0])
+            self.calls.append(f"map:{i}")
+            return f"- MAP{i}"
+        if sys == REDUCE_SYSTEM:
+            # Reduce keeps unique MAP bullets and reports count.
+            n = user.count("MAP")
+            self.calls.append(f"reduce:{n}")
+            return f"- REDUCED{n}"
+        if sys == SUMMARY_SYSTEM:
+            self.calls.append("single")
+            return "- SINGLE"
+        raise AssertionError("unexpected system prompt")
+
+
+def test_map_reduce_single_chunk_uses_single_pass() -> None:
+    rec = _Recorder(calls=[])
+    llm = _LLM(provider="anthropic", model="stub", generate=rec.generate)
+    out = map_reduce_summary(content="short text", llm=llm, chunk_chars=10_000, overlap_chars=0, reduce_batch_size=10)
+    assert out == "- SINGLE"
+    assert rec.calls == ["single"]
+
+
+def test_map_reduce_hierarchical_reduction_batches() -> None:
+    # Force multiple chunks by small chunk size and force multiple reduction rounds via small batch size.
+    text = "\n\n".join([f"PARA{i} " + ("y" * 100) for i in range(8)])
+    rec = _Recorder(calls=[])
+    llm = _LLM(provider="anthropic", model="stub", generate=rec.generate)
+    out = map_reduce_summary(content=text, llm=llm, chunk_chars=120, overlap_chars=0, reduce_batch_size=2)
+    assert out.startswith("- REDUCED")
+    # Should have mapped at least 3 chunks and reduced more than once.
+    assert len([c for c in rec.calls if c.startswith("map:")]) >= 3
+    assert len([c for c in rec.calls if c.startswith("reduce:")]) >= 2
+
+
