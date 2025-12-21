@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
-import sqlite3
 from pathlib import Path
 
-from insights.retrieval import build_context
+from insights.context import build_context
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
 from insights.utils.tokens import estimate_tokens

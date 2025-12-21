@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 
 def test_ingest_sets_title_description_summary_even_when_llm_fails(monkeypatch, tmp_path: Path) -> None:
     # Patch extraction to avoid network / heavy deps.

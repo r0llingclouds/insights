@@ -47,12 +47,14 @@ def build_context(
     progress: ProgressFn | None = None,
 ) -> ContextBuildResult:
     """
-    Build an LLM-ready context for a set of sources.
+    Build an LLM-ready FULL context for a set of sources.
 
-    FULL-only:
-    - Always include (trimmed) source text directly in the prompt.
-    - Enforce per-document max chars and overall max tokens.
+    - Per-document head trim: INSIGHTS_MAX_CONTEXT_CHARS (default 400,000).
+    - Total token trim: --max-context-tokens (tiktoken).
     """
+    _ = question  # reserved for future prompt-shaping; kept for call-site compatibility
+    _ = progress
+
     extractor_preference = extractor_preference or ["docling", "firecrawl", "assemblyai"]
     max_context_chars = _env_int("INSIGHTS_MAX_CONTEXT_CHARS", 400_000)
 
@@ -73,7 +75,7 @@ def build_context(
         if not d:
             continue
         plain = str(d.get("plain_text") or "")
-        trimmed, _ = _trim_head(plain, max_chars=max_context_chars)
+        trimmed, _trimmed = _trim_head(plain, max_chars=max_context_chars)
         doc_by_source[sid] = {
             **d,
             "plain_text": trimmed,

@@ -17,7 +17,7 @@ from insights.chat.session import ChatRunConfig, run_chat
 from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.ingest.detect import detect_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
-from insights.retrieval import build_context
+from insights.context import build_context
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
 from insights.utils.progress import make_progress_printer
