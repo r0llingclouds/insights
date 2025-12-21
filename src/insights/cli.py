@@ -766,6 +766,29 @@ def ask(
     )
 
     console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
+    # Persist this one-off Q&A as a resumable conversation.
+    db = Database.open(paths.db_path)
+    try:
+        from insights.chat.save import save_one_shot_qa
+
+        conv_id = save_one_shot_qa(
+            db,
+            source_ids=source_ids,
+            question=question,
+            answer=resp.text,
+            provider=resp.provider,
+            model=resp.model,
+            usage=resp.usage,
+        )
+    finally:
+        db.close()
+
+    console.print(f"\nConversation: {conv_id}", markup=False, highlight=False)
+    console.print(
+        f'Resume: uv run insights --app-dir "{paths.app_dir}" chat --conversation {conv_id}',
+        markup=False,
+        highlight=False,
+    )
     if context.mode == ContextMode.RETRIEVAL and context.retrieved_chunks:
         console.print("\nSources:", markup=False, highlight=False)
         for rc in context.retrieved_chunks:

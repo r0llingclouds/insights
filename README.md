@@ -161,6 +161,12 @@ Ask over a local file (auto-ingests if needed):
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summarize the main thesis."
 ```
 
+After answering, `ask` automatically creates a **new conversation** containing the question + answer, and prints a conversation id you can resume:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" chat --conversation <conversation_id>
+```
+
 Ask over a URL (auto-ingests if needed):
 
 ```bash

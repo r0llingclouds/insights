@@ -14,6 +14,7 @@ from insights.storage.db import Database
 from insights.storage.models import Source, SourceKind
 from insights.agent.resolve import resolve_source as resolve_source_any
 from insights.chat.session import ChatRunConfig, run_chat
+from insights.chat.save import save_one_shot_qa
 
 
 Provider = Literal["openai", "anthropic"]
@@ -693,12 +694,28 @@ class ToolRunner:
             max_tokens=max(64, int(max_output_tokens)),
         )
 
+        # Persist as a resumable conversation.
+        db = Database.open(self._ctx.paths.db_path)
+        try:
+            conv_id = save_one_shot_qa(
+                db,
+                source_ids=[src.id],
+                question=q,
+                answer=resp.text,
+                provider=resp.provider,
+                model=resp.model,
+                usage=resp.usage,
+            )
+        finally:
+            db.close()
+
         return {
             "success": True,
             "answer": resp.text,
             "provider": resp.provider,
             "model": resp.model,
             "usage": resp.usage,
+            "conversation_id": conv_id,
             "source": {
                 "id": src.id,
                 "kind": src.kind.value,
