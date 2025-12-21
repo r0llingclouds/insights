@@ -18,6 +18,22 @@ from insights.utils.tokens import estimate_tokens
 logger = logging.getLogger(__name__)
 
 
+def _require_description(*, db: Database, source_id: str, source_version_id: str | None, force: bool) -> None:
+    """
+    Ensure sources.description is populated as part of ingestion (critical-path).
+    """
+    from insights.describe import ensure_source_description
+
+    desc = ensure_source_description(
+        db=db,
+        source_id=source_id,
+        source_version_id=source_version_id,
+        force=force,
+    )
+    if not desc:
+        raise RuntimeError("Description generation failed (sources.description is empty)")
+
+
 class IngestBackend(StrEnum):
     DOCLING = "docling"
     FIRECRAWL = "firecrawl"  # implemented in a later milestone/todo
@@ -101,6 +117,7 @@ def _ingest_file(*, db: Database, detected: DetectedSource, refresh: bool, title
         if existing and existing.status == "ok":
             doc_id = db.get_document_id_by_source_version(existing.id)
             if doc_id:
+                _require_description(db=db, source_id=source.id, source_version_id=existing.id, force=False)
                 return IngestResult(
                     source=source,
                     source_version=existing,
@@ -135,6 +152,7 @@ def _ingest_file(*, db: Database, detected: DetectedSource, refresh: bool, title
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
+        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -167,6 +185,7 @@ def _ingest_url_docling(
             extractor_preference=[extractor, "firecrawl"],
         )
         if cached is not None:
+            _require_description(db=db, source_id=cached.source.id, source_version_id=cached.source_version.id, force=False)
             return cached
 
     try:
@@ -196,6 +215,7 @@ def _ingest_url_docling(
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
+        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -228,6 +248,7 @@ def _ingest_url_firecrawl(
             extractor_preference=[extractor, "docling"],
         )
         if cached is not None:
+            _require_description(db=db, source_id=cached.source.id, source_version_id=cached.source_version.id, force=False)
             return cached
 
     try:
@@ -257,6 +278,7 @@ def _ingest_url_firecrawl(
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
+        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -312,6 +334,7 @@ def _ingest_youtube_assemblyai(
         if existing and existing.status == "ok":
             doc_id = db.get_document_id_by_source_version(existing.id)
             if doc_id:
+                _require_description(db=db, source_id=source.id, source_version_id=existing.id, force=False)
                 return IngestResult(
                     source=source,
                     source_version=existing,
@@ -352,6 +375,7 @@ def _ingest_youtube_assemblyai(
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
+        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"

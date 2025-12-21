@@ -22,7 +22,7 @@ def pick_anthropic_model(
     default_model: str,
     content_len: int,
     cutoff: int = 10_000,
-    large_model: str = "claude-haiku-4-5",
+    large_model: str = "claude-haiku-4-5-20251001",
 ) -> str:
     """
     Pick an Anthropic model with a large-content optimization.

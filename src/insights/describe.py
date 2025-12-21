@@ -50,7 +50,7 @@ def generate_description(
                 env_model=os.getenv("INSIGHTS_DESCRIBE_MODEL"),
                 default_model="claude-sonnet-4-20250514",
                 content_len=content_len,
-                large_model="claude-haiku-4-5",
+                large_model="claude-haiku-4-5-20251001",
             )
     else:
         raise ValueError("provider must be 'openai' or 'anthropic'")
