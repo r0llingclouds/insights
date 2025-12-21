@@ -167,6 +167,7 @@ def run_chat(
                                 "/new                    Start a new conversation (keeps current sources)",
                                 "/save <title>           Set conversation title",
                                 "/export <path>          Export conversation transcript",
+                                "/export-md [dir]        Export bound sources to markdown files (default: ~/Downloads)",
                                 "/exit                   Exit chat",
                             ]
                         )
@@ -217,6 +218,30 @@ def run_chat(
                     path = Path(arg).expanduser().resolve()
                     _export_conversation(db, conversation_id=conv_id, path=path)
                     console.print(f"Exported: {path}")
+                    continue
+                if cmd == "/export-md":
+                    out_dir = Path(arg).expanduser().resolve() if arg else (Path.home() / "Downloads").expanduser().resolve()
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    bound = db.list_conversation_sources(conv_id)
+                    if not bound:
+                        console.print("No sources bound.", markup=False, highlight=False)
+                        continue
+                    from insights.config import Paths
+                    from insights.text_export import export_source_text
+
+                    # Build minimal Paths for exporter.
+                    paths = Paths(app_dir=db.path.parent, db_path=db.path, cache_dir=cache_dir)
+                    for s in bound:
+                        written = export_source_text(
+                            paths=paths,
+                            source_ref=s.id,
+                            out_dir=out_dir,
+                            include_markdown=True,
+                            include_plain=False,
+                            refresh=False,
+                        )
+                        for p in written:
+                            console.print(str(p), markup=False, highlight=False)
                     continue
 
                 console.print("Unknown command. Type /help.")

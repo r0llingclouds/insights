@@ -33,6 +33,7 @@ When handling requests:
 Natural-language patterns (examples):
 - "chat on <source_ref>": resolve the source, then call start_chat(source_ref=...). Do NOT require existing conversations.
 - "resume last conversation on <source_ref>": resolve the source, list_conversations(source_ref=...), pick latest, then start_chat(conversation_id=...).
+- "resume conversation on <source_ref> about <topic>": call find_conversations(topic=..., source_ref=...), pick best match, then start_chat(conversation_id=...).
 - "ask <source_ref> <question>": resolve the source and call ask_source; after it runs, show the returned conversation_id and a resume command.
 - "ingest <url_or_path>": call ingest_source (blocked in safe_mode).
 - "export text/transcript for <source_ref>": call export_text (blocked in safe_mode).

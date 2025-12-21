@@ -261,6 +261,13 @@ class Database:
             )
         return self.get_source_version(source_id=source_id, content_hash=content_hash, extractor=extractor)
 
+    def set_source_version_summary(self, *, source_version_id: str, summary: str) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "UPDATE source_versions SET summary = ? WHERE id = ?;",
+                (summary, source_version_id),
+            )
+
     def get_latest_source_version(self, *, source_id: str, extractor: str) -> SourceVersion | None:
         row = self._conn.execute(
             """
@@ -432,6 +439,7 @@ class Database:
                    sv.id AS source_version_id,
                    sv.extractor,
                    sv.extracted_at,
+                   sv.summary,
                    d.id AS document_id,
                    d.plain_text,
                    d.token_estimate
@@ -457,6 +465,7 @@ class Database:
                 "plain_text": str(r["plain_text"]),
                 "token_estimate": int(r["token_estimate"]),
                 "extracted_at": str(r["extracted_at"]),
+                "summary": str(r["summary"]) if r["summary"] is not None else None,
             }
             cand_rank = pref_rank.get(extractor, 999)
             prev = best.get(source_id)
@@ -727,6 +736,7 @@ def _row_to_source_version(row: sqlite3.Row) -> SourceVersion:
         extractor=str(row["extractor"]),
         status=str(row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
+        summary=str(row["summary"]) if row["summary"] is not None else None,
     )
 
 

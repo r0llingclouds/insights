@@ -132,6 +132,14 @@ MIGRATIONS: list[Migration] = [
             "CREATE INDEX IF NOT EXISTS idx_sources_kind_updated_at ON sources(kind, updated_at);",
         ),
     ),
+    Migration(
+        version=3,
+        name="add_source_version_summary",
+        statements=(
+            "ALTER TABLE source_versions ADD COLUMN summary TEXT;",
+            "CREATE INDEX IF NOT EXISTS idx_source_versions_extracted_at_summary ON source_versions(extracted_at);",
+        ),
+    ),
 ]
 
 

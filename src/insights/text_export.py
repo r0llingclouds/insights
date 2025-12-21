@@ -48,6 +48,7 @@ def export_source_text(
     paths: Paths,
     source_ref: str,
     out_dir: Path | None = None,
+    out_file: Path | None = None,
     backend: IngestBackend = IngestBackend.DOCLING,
     refresh: bool = False,
     name: str | None = None,
@@ -140,7 +141,7 @@ def export_source_text(
 
         written: list[Path] = []
         if include_markdown:
-            md_path = out_dir_resolved / f"{stem}.md"
+            md_path = (out_file.expanduser().resolve() if out_file else (out_dir_resolved / f"{stem}.md"))
             # Always write a markdown file; if markdown is empty, fall back to plain text/transcript.
             md_content = markdown or plain_text
             md_path.write_text(md_content + ("\n" if md_content and not md_content.endswith("\n") else ""), encoding="utf-8")

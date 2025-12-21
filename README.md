@@ -97,6 +97,12 @@ Agent tuning:
 - `--agent-model claude-sonnet-4-20250514`
 - `--agent-max-steps 10`
 - `--agent-verbose`
+- You can also use `agent` as an alias of `do`:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" agent "ask https://example.com/article summarize it"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" agent --yes "export text for https://example.com/article"
+```
 
 ### Source descriptions (for semantic matching)
 
@@ -136,6 +142,29 @@ export INSIGHTS_TITLE_MODEL="claude-sonnet-4-20250514"
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" title backfill
+```
+
+Backfill options:
+- `--limit N`
+- `--force`
+- `--provider openai|anthropic`
+- `--model MODEL`
+- `--max-content-chars N`
+
+### Summaries (per source version)
+
+Each extraction (`source_versions`) now stores a best-effort bullet summary (`source_versions.summary`) to improve recall.
+
+- Optional: override the default summary model:
+
+```bash
+export INSIGHTS_SUMMARY_MODEL="claude-sonnet-4-20250514"
+```
+
+- Backfill missing summaries:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" summary backfill
 ```
 
 Backfill options:
@@ -210,6 +239,14 @@ Sources options:
 - `--limit N`
 - `--json` (includes `description`)
 - `--show-description` (table view; truncated)
+- `--show-summary` (table/JSON; latest `source_versions.summary` for the preferred extractor)
+
+Show latest summary per source:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --show-summary
+uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --json --show-summary
+```
 
 #### One-off Q&A (`ask`)
 
@@ -279,6 +316,7 @@ Inside chat, useful commands:
 - `/add <source_id_or_url_or_path>` add another source
 - `/save <title>` set a title
 - `/export <path>` export transcript
+- `/export-md [dir]` export bound sources to markdown files (default: ~/Downloads)
 - `/new` start a new conversation (keeps current sources)
 - `/exit` quit
 
@@ -354,6 +392,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" text "onepager.pdf"
 
 Options:
 - `--out-dir PATH` (default `~/Downloads`)
+- `--out-file PATH` (write a single deterministic `.md` path; incompatible with `--include-plain`)
 - `--backend docling|firecrawl` (when ingesting URLs)
 - `--refresh` (force re-ingest)
 - `--name NAME` (override the output filename base)

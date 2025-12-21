@@ -125,6 +125,16 @@ def _ingest_file(*, db: Database, detected: DetectedSource, refresh: bool, title
             plain_text=plain,
             token_estimate=token_est,
         )
+        # Best-effort per-version summary for faster recall/semantic matching.
+        try:
+            if not version.summary:
+                from insights.summarize import generate_summary
+
+                summary = generate_summary(content=plain)
+                if summary:
+                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
+        except Exception:
+            pass
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -177,6 +187,15 @@ def _ingest_url_docling(
             plain_text=plain,
             token_estimate=token_est,
         )
+        try:
+            if not version.summary:
+                from insights.summarize import generate_summary
+
+                summary = generate_summary(content=plain)
+                if summary:
+                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
+        except Exception:
+            pass
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -229,6 +248,15 @@ def _ingest_url_firecrawl(
             plain_text=plain,
             token_estimate=token_est,
         )
+        try:
+            if not version.summary:
+                from insights.summarize import generate_summary
+
+                summary = generate_summary(content=plain)
+                if summary:
+                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
+        except Exception:
+            pass
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -315,6 +343,15 @@ def _ingest_youtube_assemblyai(
             plain_text=plain,
             token_estimate=token_est,
         )
+        try:
+            if not version.summary:
+                from insights.summarize import generate_summary
+
+                summary = generate_summary(content=plain)
+                if summary:
+                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
+        except Exception:
+            pass
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"

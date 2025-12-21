@@ -38,6 +38,7 @@ class SourceVersion:
     extractor: str
     status: str
     error: str | None
+    summary: str | None
 
 
 @dataclass(frozen=True, slots=True)

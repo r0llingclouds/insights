@@ -60,6 +60,9 @@ app.add_typer(describe_app, name="describe")
 title_app = typer.Typer(add_completion=False, help="Generate/backfill source titles.")
 app.add_typer(title_app, name="title")
 
+summary_app = typer.Typer(add_completion=False, help="Generate/backfill source version summaries.")
+app.add_typer(summary_app, name="summary")
+
 
 @app.callback()
 def _global_options(
@@ -121,7 +124,17 @@ def _global_options(
 
 
 @app.command()
-def do(ctx: typer.Context, query: Annotated[str, typer.Argument(help="Natural-language query.")]) -> None:
+def do(
+    ctx: typer.Context,
+    query: Annotated[str, typer.Argument(help="Natural-language query.")],
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            help="Allow side effects for this agent run (e.g. ingest/export). Equivalent to the global --yes.",
+        ),
+    ] = False,
+) -> None:
     """
     Run a natural-language query through the agent (tool-use).
 
@@ -130,6 +143,7 @@ def do(ctx: typer.Context, query: Annotated[str, typer.Argument(help="Natural-la
     """
     paths = ctx.obj["paths"]
     cfg = ctx.obj.get("agent") or {}
+    allow_side_effects = bool(yes) or bool(cfg.get("allow_side_effects") or False)
 
     from insights.agent.loop import run_agent
 
@@ -143,9 +157,25 @@ def do(ctx: typer.Context, query: Annotated[str, typer.Argument(help="Natural-la
         model=str(cfg.get("model") or "claude-sonnet-4-20250514"),
         max_steps=int(cfg.get("max_steps") or 10),
         verbose=bool(cfg.get("verbose") or False),
-        allow_side_effects=bool(cfg.get("allow_side_effects") or False),
+        allow_side_effects=allow_side_effects,
     )
     console.print(out, markup=False, highlight=False, soft_wrap=True)
+
+
+@app.command()
+def agent(
+    ctx: typer.Context,
+    query: Annotated[str, typer.Argument(help="Natural-language query.")],
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            help="Allow side effects for this agent run (e.g. ingest/export). Equivalent to the global --yes.",
+        ),
+    ] = False,
+) -> None:
+    """Alias for `insights do`."""
+    do(ctx=ctx, query=query, yes=yes)
 
 
 @describe_app.command("backfill")
@@ -315,6 +345,102 @@ def title_backfill(
         db.close()
 
 
+@summary_app.command("backfill")
+def summary_backfill(
+    ctx: typer.Context,
+    limit: Annotated[int, typer.Option("--limit", help="Max source versions to process (default 100).")] = 100,
+    force: Annotated[bool, typer.Option("--force", help="Regenerate summaries even if already present.")] = False,
+    provider: Annotated[str, typer.Option("--provider", help="openai|anthropic")] = "anthropic",
+    model: Annotated[str | None, typer.Option("--model", help="Model override.")] = None,
+    max_content_chars: Annotated[
+        int,
+        typer.Option("--max-content-chars", help="Max characters from source text to send to the LLM."),
+    ] = 12000,
+) -> None:
+    """
+    Backfill missing (or all, with --force) summaries for source versions.
+    """
+    from insights.summarize import generate_summary
+
+    paths = ctx.obj["paths"]
+    db = Database.open(paths.db_path)
+    try:
+        lim = max(1, min(int(limit), 5000))
+
+        import sqlite3
+
+        conn = sqlite3.connect(str(paths.db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            if force:
+                rows = conn.execute(
+                    """
+                    SELECT sv.id AS source_version_id
+                    FROM source_versions sv
+                    WHERE sv.status = 'ok'
+                    ORDER BY sv.extracted_at DESC
+                    LIMIT ?;
+                    """,
+                    (lim,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT sv.id AS source_version_id
+                    FROM source_versions sv
+                    WHERE sv.status = 'ok' AND (sv.summary IS NULL OR trim(sv.summary) = '')
+                    ORDER BY sv.extracted_at DESC
+                    LIMIT ?;
+                    """,
+                    (lim,),
+                ).fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            console.print("No source versions to process.", markup=False, highlight=False)
+            return
+
+        processed = 0
+        skipped = 0
+        errors = 0
+
+        for idx, r in enumerate(rows, 1):
+            version_id = str(r["source_version_id"])
+            sv = db.get_source_version_by_id(version_id)
+            if not sv:
+                skipped += 1
+                continue
+            plain = db.get_document_plain_text_by_source_version(version_id)
+            if not plain:
+                skipped += 1
+                continue
+            try:
+                summary = generate_summary(
+                    content=plain,
+                    provider=provider,
+                    model=model,
+                    max_content_chars=max_content_chars,
+                )
+                if not summary:
+                    skipped += 1
+                    continue
+                db.set_source_version_summary(source_version_id=version_id, summary=summary)
+                processed += 1
+                console.print(f"- {version_id} → (summary saved)", markup=False, highlight=False)
+            except Exception as e:
+                errors += 1
+                err_console.print(f"(error) {version_id}: {type(e).__name__}: {e}", markup=False, highlight=False)
+
+        err_console.print(
+            f"Done. processed={processed} skipped={skipped} errors={errors}",
+            markup=False,
+            highlight=False,
+        )
+    finally:
+        db.close()
+
+
 @app.command()
 def version() -> None:
     """Print version info."""
@@ -409,6 +535,10 @@ def list_sources(
         bool,
         typer.Option("--show-description", help="Include a description column (truncated) in table output."),
     ] = False,
+    show_summary: Annotated[
+        bool,
+        typer.Option("--show-summary", help="Include latest summary (truncated) from the most recent source version."),
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
 ) -> None:
     """List ingested sources stored in the database."""
@@ -424,6 +554,13 @@ def list_sources(
     db = Database.open(paths.db_path)
     try:
         sources = db.list_sources(limit=limit)
+        summary_by_source_id: dict[str, str | None] = {}
+        if show_summary:
+            docs = db.get_documents_for_sources_latest(
+                source_ids=[s.id for s in sources],
+                extractor_preference=["firecrawl", "docling", "assemblyai"],
+            )
+            summary_by_source_id = {str(d["source_id"]): d.get("summary") for d in docs}
     finally:
         db.close()
 
@@ -439,6 +576,7 @@ def list_sources(
                     "title": s.title,
                     "locator": s.locator,
                     "description": s.description,
+                    **({"summary": summary_by_source_id.get(s.id)} if show_summary else {}),
                     "created_at": s.created_at.isoformat(),
                     "updated_at": s.updated_at.isoformat(),
                 }
@@ -464,6 +602,8 @@ def list_sources(
     table.add_column("locator")
     if show_description:
         table.add_column("description")
+    if show_summary:
+        table.add_column("summary")
     table.add_column("updated_at", no_wrap=True)
     for s in sources:
         table.add_row(
@@ -472,6 +612,7 @@ def list_sources(
             s.title or "",
             s.locator,
             _excerpt(s.description) if show_description else None,
+            _excerpt(summary_by_source_id.get(s.id), n=160) if show_summary else None,
             s.updated_at.isoformat(),
         )
     console.print(table)
@@ -871,6 +1012,10 @@ def export_text(
         Path | None,
         typer.Option("--out-dir", help="Output directory (default: ~/Downloads)."),
     ] = None,  # resolved at runtime (default: ~/Downloads)
+    out_file: Annotated[
+        Path | None,
+        typer.Option("--out-file", help="Write a single markdown file to this exact path (deterministic output)."),
+    ] = None,
     backend: Annotated[
         IngestBackend,
         typer.Option("--backend", help="Backend for URL ingestion when ingesting."),
@@ -900,11 +1045,15 @@ def export_text(
     paths = ctx.obj["paths"]
     from insights.text_export import AmbiguousSourceRefError, default_downloads_dir, export_source_text
 
+    if out_file is not None and include_plain:
+        raise typer.BadParameter("--out-file writes a single .md; combine with --no-plain (default) or omit --include-plain.")
+
     try:
         written = export_source_text(
             paths=paths,
             source_ref=ref,
             out_dir=out_dir or default_downloads_dir(),
+            out_file=out_file,
             backend=backend,
             refresh=refresh,
             name=name,

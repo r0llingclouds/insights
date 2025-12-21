@@ -368,6 +368,98 @@ class ToolRunner:
         finally:
             conn.close()
 
+    def find_conversations(
+        self,
+        *,
+        topic: str,
+        source_ref: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Find conversations about a topic by searching conversation titles + message contents.
+        Intended for \"resume conversation ... about ...\".
+        """
+        q = (topic or "").strip()
+        if not q:
+            return {"success": False, "error": "topic is required"}
+        lim = max(1, min(int(limit), 50))
+
+        import sqlite3
+
+        conn = sqlite3.connect(str(self._ctx.paths.db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            params: list[Any] = []
+            where = []
+
+            if source_ref:
+                db = Database.open(self._ctx.paths.db_path)
+                try:
+                    resolved = resolve_source_any(db=db, ref=source_ref, suggestions_limit=5)
+                finally:
+                    db.close()
+                if resolved.ambiguous:
+                    return {
+                        "success": True,
+                        "ambiguous": True,
+                        "suggestions": [_source_to_dict(s) for s in resolved.suggestions],
+                    }
+                if not (resolved.found and resolved.source):
+                    return {"success": True, "matches": [], "match_count": 0, "note": "source not found"}
+                where.append(
+                    "c.id IN (SELECT conversation_id FROM conversation_sources WHERE source_id = ?)"
+                )
+                params.append(resolved.source.id)
+
+            like = f"%{q.lower()}%"
+            # Get best-matching message per conversation (simple heuristic: first matching message).
+            where.append(
+                "("
+                "lower(coalesce(c.title,'')) LIKE ? OR "
+                "c.id IN (SELECT conversation_id FROM messages WHERE lower(content) LIKE ?)"
+                ")"
+            )
+            params.extend([like, like])
+
+            sql = f"""
+            SELECT
+              c.id,
+              c.title,
+              c.updated_at,
+              (SELECT COUNT(1) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
+              (SELECT content
+                 FROM messages m2
+                WHERE m2.conversation_id = c.id AND lower(m2.content) LIKE ?
+                ORDER BY m2.created_at ASC
+                LIMIT 1) AS match_message
+            FROM conversations c
+            WHERE {' AND '.join(where)}
+            ORDER BY c.updated_at DESC
+            LIMIT ?;
+            """
+            params.append(like)
+            params.append(lim)
+            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+            matches: list[dict[str, Any]] = []
+            for r in rows:
+                excerpt = (r.get("match_message") or "").strip()
+                excerpt = " ".join(excerpt.split())
+                if len(excerpt) > 180:
+                    excerpt = excerpt[:179].rstrip() + "…"
+                matches.append(
+                    {
+                        "id": str(r.get("id")),
+                        "title": r.get("title"),
+                        "updated_at": r.get("updated_at"),
+                        "message_count": r.get("message_count"),
+                        "match_excerpt": excerpt,
+                        "match_reason": "title_or_message",
+                    }
+                )
+            return {"success": True, "topic": q, "matches": matches, "match_count": len(matches)}
+        finally:
+            conn.close()
+
     def get_conversation_info(self, *, conversation_id: str) -> dict[str, Any]:
         cid = (conversation_id or "").strip()
         if not cid:
@@ -515,6 +607,7 @@ class ToolRunner:
         *,
         source_ref: str,
         out_dir: str | None = None,
+        out_file: str | None = None,
         backend: str | None = None,
         refresh: bool = False,
         name: str | None = None,
@@ -536,6 +629,10 @@ class ToolRunner:
             backend_enum = IngestBackend(backend.strip().lower())
 
         out_path = Path(out_dir).expanduser().resolve() if out_dir else default_downloads_dir()
+        out_file_path = Path(out_file).expanduser().resolve() if out_file else None
+
+        if out_file_path is not None and include_plain:
+            return {"success": False, "error": "--out-file writes a single .md; use include_plain=false (default)."}
 
         if not self._ctx.allow_side_effects:
             cmd: list[str] = [
@@ -546,11 +643,13 @@ class ToolRunner:
                 str(self._ctx.paths.app_dir),
                 "text",
                 ref,
-                "--out-dir",
-                str(out_path),
                 "--backend",
                 backend_enum.value,
             ]
+            if out_file_path is not None:
+                cmd.extend(["--out-file", str(out_file_path)])
+            else:
+                cmd.extend(["--out-dir", str(out_path)])
             if refresh:
                 cmd.append("--refresh")
             if name:
@@ -572,6 +671,7 @@ class ToolRunner:
                 paths=self._ctx.paths,
                 source_ref=ref,
                 out_dir=out_path,
+                out_file=out_file_path,
                 backend=backend_enum,
                 refresh=bool(refresh),
                 name=name,
@@ -821,6 +921,7 @@ class ToolRunner:
             "resolve_source": self.resolve_source,
             "list_conversations": self.list_conversations,
             "search_conversations": self.search_conversations,
+            "find_conversations": self.find_conversations,
             "get_conversation_info": self.get_conversation_info,
             "start_chat": self.start_chat,
             "export_text": self.export_text,
@@ -908,6 +1009,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "find_conversations",
+        "description": "Find conversations about a topic by searching conversation titles + message contents. Use this to resume a conversation about a topic, optionally scoped to a source.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Topic/keywords to search for"},
+                "source_ref": {"type": "string", "description": "Optional: limit to a source ref (id/url/path/title/basename)"},
+                "limit": {"type": "integer", "description": "Max matches (default 10)"},
+            },
+            "required": ["topic"],
+        },
+    },
+    {
         "name": "get_conversation_info",
         "description": "Get details about a specific conversation and its bound sources.",
         "input_schema": {
@@ -942,6 +1056,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "properties": {
                 "source_ref": {"type": "string", "description": "Source id/url/path/title/basename"},
                 "out_dir": {"type": "string", "description": "Output directory path (default ~/Downloads)"},
+                "out_file": {"type": "string", "description": "Exact output markdown file path (writes one .md)"},
                 "backend": {"type": "string", "enum": ["docling", "firecrawl"], "description": "URL backend when ingesting"},
                 "refresh": {"type": "boolean", "description": "Force re-ingest"},
                 "name": {"type": "string", "description": "Optional base filename override"},
