@@ -64,6 +64,17 @@ def _resolve_or_ingest_source(
             highlight=False,
         )
     try:
+        from insights.title import ensure_source_title
+
+        ensure_source_title(
+            db=db,
+            source_id=result.source.id,
+            source_version_id=result.source_version.id,
+            force=False,
+        )
+    except Exception:
+        pass
+    try:
         from insights.describe import ensure_source_description
 
         ensure_source_description(

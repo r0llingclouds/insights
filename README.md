@@ -83,6 +83,22 @@ Insights stores an LLM-generated one-liner description for each source (`sources
 uv run insights --app-dir "$INSIGHTS_APP_DIR" describe backfill
 ```
 
+### Source titles (auto-generate when missing)
+
+If a source has no title, Insights will generate a short plain title (best-effort) from the cached text and store it in `sources.title`.
+
+- Set a specific model for title generation:
+
+```bash
+export INSIGHTS_TITLE_MODEL="claude-sonnet-4-20250514"
+```
+
+- Backfill missing titles for existing sources:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" title backfill
+```
+
 ### Commands
 
 #### Ingest sources

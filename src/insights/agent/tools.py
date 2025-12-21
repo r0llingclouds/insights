@@ -442,6 +442,17 @@ class ToolRunner:
             except Exception:
                 # Best-effort; never fail ingestion due to description generation.
                 pass
+            try:
+                from insights.title import ensure_source_title
+
+                ensure_source_title(
+                    db=db,
+                    source_id=result.source.id,
+                    source_version_id=result.source_version.id,
+                    force=False,
+                )
+            except Exception:
+                pass
         finally:
             db.close()
         return {
@@ -517,6 +528,17 @@ class ToolRunner:
                         source_id=ingested.source.id,
                         source_version_id=ingested.source_version.id,
                         force=bool(refresh_source),
+                    )
+                except Exception:
+                    pass
+                try:
+                    from insights.title import ensure_source_title
+
+                    ensure_source_title(
+                        db=db,
+                        source_id=ingested.source.id,
+                        source_version_id=ingested.source_version.id,
+                        force=False,
                     )
                 except Exception:
                     pass

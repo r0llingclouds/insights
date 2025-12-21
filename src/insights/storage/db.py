@@ -164,6 +164,13 @@ class Database:
                 (description, _dt_to_iso(_utcnow()), source_id),
             )
 
+    def set_source_title(self, *, source_id: str, title: str) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "UPDATE sources SET title = ?, updated_at = ? WHERE id = ?;",
+                (title, _dt_to_iso(_utcnow()), source_id),
+            )
+
     def list_sources_missing_description(
         self,
         *,
@@ -176,6 +183,27 @@ class Database:
         lim = max(1, min(int(limit), 1000))
         params: list[Any] = []
         where = ["(description IS NULL OR trim(description) = '')"]
+        if kind is not None:
+            where.append("kind = ?")
+            params.append(kind.value)
+        rows = self._conn.execute(
+            f"SELECT * FROM sources WHERE {' AND '.join(where)} ORDER BY updated_at DESC LIMIT ?;",
+            [*params, lim],
+        ).fetchall()
+        return [_row_to_source(r) for r in rows]
+
+    def list_sources_missing_title(
+        self,
+        *,
+        limit: int = 100,
+        kind: SourceKind | None = None,
+    ) -> list[Source]:
+        """
+        List sources that have no title yet (NULL or empty).
+        """
+        lim = max(1, min(int(limit), 1000))
+        params: list[Any] = []
+        where = ["(title IS NULL OR trim(title) = '')"]
         if kind is not None:
             where.append("kind = ?")
             params.append(kind.value)

@@ -57,6 +57,9 @@ logger = logging.getLogger(__name__)
 describe_app = typer.Typer(add_completion=False, help="Generate/backfill source descriptions for semantic matching.")
 app.add_typer(describe_app, name="describe")
 
+title_app = typer.Typer(add_completion=False, help="Generate/backfill source titles.")
+app.add_typer(title_app, name="title")
+
 
 @app.callback()
 def _global_options(
@@ -228,6 +231,90 @@ def describe_backfill(
         db.close()
 
 
+@title_app.command("backfill")
+def title_backfill(
+    ctx: typer.Context,
+    limit: Annotated[int, typer.Option("--limit", help="Max sources to process (default 100).")] = 100,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Regenerate titles even if already present."),
+    ] = False,
+    provider: Annotated[str, typer.Option("--provider", help="openai|anthropic")] = "anthropic",
+    model: Annotated[str | None, typer.Option("--model", help="Model override.")] = None,
+    max_content_chars: Annotated[
+        int,
+        typer.Option("--max-content-chars", help="Max characters from source text to send to the LLM."),
+    ] = 8000,
+) -> None:
+    """
+    Backfill missing (or all, with --force) source titles.
+    """
+    from insights.title import ensure_source_title
+
+    paths = ctx.obj["paths"]
+    db = Database.open(paths.db_path)
+    try:
+        lim = max(1, min(int(limit), 5000))
+        if force:
+            sources = db.list_sources(limit=lim)
+        else:
+            sources = db.list_sources_missing_title(limit=lim)
+
+        if not sources:
+            console.print("No sources to process.", markup=False, highlight=False)
+            return
+
+        extractor_preference = ["firecrawl", "docling", "assemblyai"]
+        processed = 0
+        skipped = 0
+        errors = 0
+
+        for idx, s in enumerate(sources, 1):
+            display_locator = s.locator
+            if s.kind == SourceKind.YOUTUBE:
+                display_locator = f"https://www.youtube.com/watch?v={s.locator}"
+            display = s.title or display_locator
+            err_console.print(f"[{idx}/{len(sources)}] {display}", markup=False, highlight=False)
+
+            plain = db.get_latest_plain_text_for_source(
+                source_id=s.id,
+                extractor_preference=extractor_preference,
+            )
+            if not plain:
+                skipped += 1
+                err_console.print("  (skip) no cached content found", markup=False, highlight=False)
+                continue
+
+            try:
+                title = ensure_source_title(
+                    db=db,
+                    source_id=s.id,
+                    source_version_id=None,
+                    force=bool(force),
+                    provider=provider,
+                    model=model,
+                    max_content_chars=max_content_chars,
+                    extractor_preference=extractor_preference,
+                )
+                if not title:
+                    skipped += 1
+                    err_console.print("  (skip) empty title", markup=False, highlight=False)
+                    continue
+                processed += 1
+                console.print(f"- {s.id} → {title}", markup=False, highlight=False)
+            except Exception as e:
+                errors += 1
+                err_console.print(f"  (error) {type(e).__name__}: {e}", markup=False, highlight=False)
+
+        err_console.print(
+            f"Done. processed={processed} skipped={skipped} errors={errors}",
+            markup=False,
+            highlight=False,
+        )
+    finally:
+        db.close()
+
+
 @app.command()
 def version() -> None:
     """Print version info."""
@@ -276,6 +363,18 @@ def ingest(
         except Exception as e:
             # Never fail ingest due to description generation.
             logger.debug("Description generation failed for source_id=%s: %s", result.source.id, e)
+        try:
+            from insights.title import ensure_source_title
+
+            ensure_source_title(
+                db=db,
+                source_id=result.source.id,
+                source_version_id=result.source_version.id,
+                force=False,
+            )
+        except Exception as e:
+            # Never fail ingest due to title generation.
+            logger.debug("Title generation failed for source_id=%s: %s", result.source.id, e)
     finally:
         db.close()
 
@@ -619,6 +718,17 @@ def ask(
             except Exception as e:
                 # Never fail ask due to description generation.
                 logger.debug("Description generation failed for source_id=%s: %s", ingested.source.id, e)
+            try:
+                from insights.title import ensure_source_title
+
+                ensure_source_title(
+                    db=db,
+                    source_id=ingested.source.id,
+                    source_version_id=ingested.source_version.id,
+                    force=False,
+                )
+            except Exception as e:
+                logger.debug("Title generation failed for source_id=%s: %s", ingested.source.id, e)
             source_ids.append(ingested.source.id)
 
         context = build_context(
