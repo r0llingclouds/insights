@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+import re
 
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.llm.routing import pick_anthropic_model
 from insights.storage.db import Database
+from insights.storage.models import SourceKind
 
 
 TITLE_SYSTEM = """\
@@ -76,6 +80,49 @@ def generate_title(
 DEFAULT_EXTRACTOR_PREFERENCE: list[str] = ["firecrawl", "docling", "assemblyai"]
 
 
+_RE_SLUG_SPLIT = re.compile(r"[-_]+")
+
+
+def _clean_title(text: str, *, max_chars: int = 80) -> str:
+    t = " ".join((text or "").split()).strip().strip("\"'")
+    if not t:
+        return ""
+    if len(t) > max_chars:
+        t = t[: max_chars - 1].rstrip() + "…"
+    return t
+
+
+def _fallback_title(*, kind: SourceKind, locator: str) -> str:
+    loc = (locator or "").strip()
+    if kind == SourceKind.FILE:
+        name = Path(loc).name if loc else ""
+        return _clean_title(name or loc or "Untitled")
+    if kind == SourceKind.URL:
+        try:
+            p = urlparse(loc)
+        except Exception:
+            return _clean_title(loc or "Untitled")
+        host = (p.hostname or "").lower().strip(".")
+        seg = ""
+        if p.path:
+            parts = [x for x in p.path.split("/") if x]
+            if parts:
+                seg = parts[-1]
+        seg = unquote(seg or "").strip()
+        seg_words = [w for w in _RE_SLUG_SPLIT.split(seg) if w]
+        seg_title = " ".join(seg_words).strip()
+        if seg_title:
+            seg_title = seg_title[:1].upper() + seg_title[1:]
+        if host and seg_title:
+            return _clean_title(f"{host} — {seg_title}")
+        if host:
+            return _clean_title(host)
+        return _clean_title(loc or "Untitled")
+    if kind == SourceKind.YOUTUBE:
+        return _clean_title(f"YouTube {loc}" if loc else "YouTube")
+    return _clean_title(loc or "Untitled")
+
+
 def ensure_source_title(
     *,
     db: Database,
@@ -92,7 +139,7 @@ def ensure_source_title(
 
     - If a title already exists and `force` is False, it's returned unchanged.
     - If missing, we generate from cached plain text and persist it.
-    - This is best-effort; callers should catch exceptions and proceed.
+    - If generation fails/empty, we persist a deterministic fallback (never leaves title NULL).
     """
     src = db.get_source_by_id(source_id)
     if src is None:
@@ -108,17 +155,20 @@ def ensure_source_title(
             source_id=source_id,
             extractor_preference=extractor_preference or DEFAULT_EXTRACTOR_PREFERENCE,
         )
-    if not plain or not plain.strip():
-        return None
 
-    title = generate_title(
-        content=plain,
-        provider=provider,
-        model=model,
-        max_content_chars=max_content_chars,
-    )
-    if not title:
-        return None
+    title = ""
+    if plain and plain.strip():
+        try:
+            title = generate_title(
+                content=plain,
+                provider=provider,
+                model=model,
+                max_content_chars=max_content_chars,
+            )
+        except Exception:
+            title = ""
+
+    title = _clean_title(title) or _fallback_title(kind=src.kind, locator=src.locator)
     db.set_source_title(source_id=source_id, title=title)
     return title
 

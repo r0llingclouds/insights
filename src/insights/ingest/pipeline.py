@@ -53,6 +53,48 @@ def _require_description(
         raise RuntimeError("Description generation failed (sources.description is empty)")
 
 
+def _require_metadata(
+    *,
+    db: Database,
+    source_id: str,
+    source_version_id: str,
+    plain_text: str,
+    force: bool,
+    progress: Callable[[str], None] | None,
+) -> None:
+    """
+    Ensure title/description/summary are populated as part of ingestion (critical-path).
+    Uses deterministic fallbacks when LLM generation fails.
+    """
+    from insights.describe import ensure_source_description
+    from insights.summarize import ensure_source_version_summary
+    from insights.title import ensure_source_title
+
+    _p(progress, "titling: start")
+    title = ensure_source_title(db=db, source_id=source_id, source_version_id=source_version_id, force=force)
+    _p(progress, "titling: done")
+    if not (title or "").strip():
+        raise RuntimeError("Title generation failed (sources.title is empty)")
+
+    _p(progress, "describing: start")
+    desc = ensure_source_description(db=db, source_id=source_id, source_version_id=source_version_id, force=force)
+    _p(progress, "describing: done")
+    if not (desc or "").strip():
+        raise RuntimeError("Description generation failed (sources.description is empty)")
+
+    _p(progress, "summarizing: start")
+    summary = ensure_source_version_summary(
+        db=db,
+        source_version_id=source_version_id,
+        content=plain_text or "",
+        force=force,
+        progress=progress,
+    )
+    _p(progress, "summarizing: done")
+    if not (summary or "").strip():
+        raise RuntimeError("Summary generation failed (source_versions.summary is empty)")
+
+
 class IngestBackend(StrEnum):
     DOCLING = "docling"
     FIRECRAWL = "firecrawl"  # implemented in a later milestone/todo
@@ -148,10 +190,12 @@ def _ingest_file(
         if existing and existing.status == "ok":
             doc_id = db.get_document_id_by_source_version(existing.id)
             if doc_id:
-                _require_description(
+                plain = db.get_document_plain_text_by_source_version(existing.id) or ""
+                _require_metadata(
                     db=db,
                     source_id=source.id,
                     source_version_id=existing.id,
+                    plain_text=plain,
                     force=False,
                     progress=summary_progress,
                 )
@@ -181,22 +225,11 @@ def _ingest_file(
             plain_text=plain,
             token_count=token_est,
         )
-        # Best-effort per-version summary for faster recall/semantic matching.
-        try:
-            if not version.summary:
-                from insights.summarize import generate_summary
-
-                _p(summary_progress, "summarizing: start")
-                summary = generate_summary(content=plain, progress=summary_progress)
-                _p(summary_progress, "summarizing: done")
-                if summary:
-                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
-        except Exception:
-            pass
-        _require_description(
+        _require_metadata(
             db=db,
             source_id=source.id,
             source_version_id=version.id,
+            plain_text=plain,
             force=bool(refresh),
             progress=summary_progress,
         )
@@ -233,10 +266,12 @@ def _ingest_url_docling(
             extractor_preference=[extractor, "firecrawl"],
         )
         if cached is not None:
-            _require_description(
+            plain = db.get_document_plain_text_by_source_version(cached.source_version.id) or ""
+            _require_metadata(
                 db=db,
                 source_id=cached.source.id,
                 source_version_id=cached.source_version.id,
+                plain_text=plain,
                 force=False,
                 progress=summary_progress,
             )
@@ -262,21 +297,11 @@ def _ingest_url_docling(
             plain_text=plain,
             token_count=token_est,
         )
-        try:
-            if not version.summary:
-                from insights.summarize import generate_summary
-
-                _p(summary_progress, "summarizing: start")
-                summary = generate_summary(content=plain, progress=summary_progress)
-                _p(summary_progress, "summarizing: done")
-                if summary:
-                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
-        except Exception:
-            pass
-        _require_description(
+        _require_metadata(
             db=db,
             source_id=source.id,
             source_version_id=version.id,
+            plain_text=plain,
             force=bool(refresh),
             progress=summary_progress,
         )
@@ -313,10 +338,12 @@ def _ingest_url_firecrawl(
             extractor_preference=[extractor, "docling"],
         )
         if cached is not None:
-            _require_description(
+            plain = db.get_document_plain_text_by_source_version(cached.source_version.id) or ""
+            _require_metadata(
                 db=db,
                 source_id=cached.source.id,
                 source_version_id=cached.source_version.id,
+                plain_text=plain,
                 force=False,
                 progress=summary_progress,
             )
@@ -342,21 +369,11 @@ def _ingest_url_firecrawl(
             plain_text=plain,
             token_count=token_est,
         )
-        try:
-            if not version.summary:
-                from insights.summarize import generate_summary
-
-                _p(summary_progress, "summarizing: start")
-                summary = generate_summary(content=plain, progress=summary_progress)
-                _p(summary_progress, "summarizing: done")
-                if summary:
-                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
-        except Exception:
-            pass
-        _require_description(
+        _require_metadata(
             db=db,
             source_id=source.id,
             source_version_id=version.id,
+            plain_text=plain,
             force=bool(refresh),
             progress=summary_progress,
         )
@@ -416,10 +433,12 @@ def _ingest_youtube_assemblyai(
         if existing and existing.status == "ok":
             doc_id = db.get_document_id_by_source_version(existing.id)
             if doc_id:
-                _require_description(
+                plain = db.get_document_plain_text_by_source_version(existing.id) or ""
+                _require_metadata(
                     db=db,
                     source_id=source.id,
                     source_version_id=existing.id,
+                    plain_text=plain,
                     force=False,
                     progress=summary_progress,
                 )
@@ -458,21 +477,11 @@ def _ingest_youtube_assemblyai(
             plain_text=plain,
             token_count=token_est,
         )
-        try:
-            if not version.summary:
-                from insights.summarize import generate_summary
-
-                _p(summary_progress, "summarizing: start")
-                summary = generate_summary(content=plain, progress=summary_progress)
-                _p(summary_progress, "summarizing: done")
-                if summary:
-                    db.set_source_version_summary(source_version_id=version.id, summary=summary)
-        except Exception:
-            pass
-        _require_description(
+        _require_metadata(
             db=db,
             source_id=source.id,
             source_version_id=version.id,
+            plain_text=plain,
             force=bool(refresh),
             progress=summary_progress,
         )

@@ -17,9 +17,9 @@ uv run insights version
 
 ### Storage / caching
 
-- **Default app dir**: `~/.insights/`
-  - DB: `~/.insights/insights.db`
-  - Cache: `~/.insights/cache/`
+- **Default app dir**: `~/Documents/insights/`
+  - DB: `~/Documents/insights/insights.db`
+  - Cache: `~/Documents/insights/cache/`
 - For testing / isolation, point the app at a custom directory:
 
 ```bash
@@ -43,7 +43,7 @@ Optional: you can also store them in a `.env` file in your **current directory**
 
 ### Global options (apply to all commands)
 
-- `--app-dir PATH`: app directory (DB + cache). Default: `~/.insights/`
+- `--app-dir PATH`: app directory (DB + cache). Default: `~/Documents/insights/`
 - `--db PATH`: explicit DB file path (overrides app dir DB)
 - `--verbose`: enable debug logging
 

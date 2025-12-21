@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.llm.routing import pick_anthropic_model
@@ -79,6 +80,40 @@ def generate_description(
 DEFAULT_EXTRACTOR_PREFERENCE: list[str] = ["firecrawl", "docling", "assemblyai"]
 
 
+_RE_SENT_END = re.compile(r"([.!?])\s+")
+
+
+def _clean_one_liner(text: str, *, max_chars: int = 200) -> str:
+    s = " ".join((text or "").split()).strip().strip("\"'")
+    if not s:
+        return ""
+    if len(s) > max_chars:
+        s = s[: max_chars - 3].rstrip() + "..."
+    return s
+
+
+def _fallback_description(*, plain_text: str | None, title: str | None, locator: str) -> str:
+    txt = (plain_text or "").strip()
+    if txt:
+        # Prefer first paragraph; fall back to first sentence.
+        para = ""
+        for p in txt.split("\n\n"):
+            p = p.strip()
+            if p:
+                para = p
+                break
+        if not para:
+            para = txt
+        # If paragraph is huge, cut early.
+        para = para[:1000]
+        # Take first sentence if it exists.
+        m = _RE_SENT_END.search(para)
+        if m:
+            para = para[: m.end()].strip()
+        return _clean_one_liner(para) or _clean_one_liner(title or "") or _clean_one_liner(locator)
+    return _clean_one_liner(title or "") or _clean_one_liner(locator) or "Source"
+
+
 def ensure_source_description(
     *,
     db: Database,
@@ -95,7 +130,7 @@ def ensure_source_description(
 
     - If a description already exists and `force` is False, it's returned unchanged.
     - If missing, we generate from the cached plain text and persist it.
-    - This should never be treated as critical-path; callers are expected to catch errors.
+    - If generation fails/empty, we persist a deterministic fallback (never leaves description NULL).
     """
     src = db.get_source_by_id(source_id)
     if src is None:
@@ -111,17 +146,20 @@ def ensure_source_description(
             source_id=source_id,
             extractor_preference=extractor_preference or DEFAULT_EXTRACTOR_PREFERENCE,
         )
-    if not plain or not plain.strip():
-        return None
 
-    desc = generate_description(
-        content=plain,
-        provider=provider,
-        model=model,
-        max_content_chars=max_content_chars,
-    )
-    if not desc:
-        return None
+    desc = ""
+    if plain and plain.strip():
+        try:
+            desc = generate_description(
+                content=plain,
+                provider=provider,
+                model=model,
+                max_content_chars=max_content_chars,
+            )
+        except Exception:
+            desc = ""
+
+    desc = _clean_one_liner(desc) or _fallback_description(plain_text=plain, title=src.title, locator=src.locator)
     db.set_source_description(source_id=source_id, description=desc)
     return desc
 

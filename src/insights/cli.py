@@ -76,13 +76,13 @@ def _global_options(
         Path | None,
         typer.Option(
             "--db",
-            help="Path to SQLite DB file (default: ~/.insights/insights.db).",
+            help="Path to SQLite DB file (default: ~/Documents/insights/insights.db).",
             dir_okay=False,
         ),
     ] = None,
     app_dir: Annotated[
         Path | None,
-        typer.Option("--app-dir", help="App directory (default: ~/.insights)."),
+        typer.Option("--app-dir", help="App directory (default: ~/Documents/insights)."),
     ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", help="Enable debug logging.")] = False,
     yes: Annotated[

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+import re
 from typing import Callable
 
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.llm.routing import get_large_content_cutoff, is_large_content, pick_anthropic_model
+from insights.storage.db import Database
 
 
 SUMMARY_SYSTEM = """\
@@ -154,6 +156,35 @@ def _format_bullets(items: list[str]) -> str:
     return "\n".join(f"- {it}" for it in items if it).strip()
 
 
+_RE_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _fallback_summary(content: str) -> str:
+    """
+    Deterministic fallback summary (Markdown bullets) when the LLM path fails.
+    """
+    t = " ".join((content or "").replace("\r\n", "\n").replace("\r", "\n").split()).strip()
+    if not t:
+        return "- (no content cached)"
+    # Use first ~4k chars to build bullets.
+    head = t[:4000]
+    sentences = [s.strip() for s in _RE_SENT_SPLIT.split(head) if s.strip()]
+    bullets: list[str] = []
+    for s in sentences:
+        s = " ".join(s.split())
+        if len(s) > 200:
+            s = s[:199].rstrip() + "…"
+        if s:
+            bullets.append(s)
+        if len(bullets) >= 5:
+            break
+    if not bullets:
+        bullets = [head[:199].rstrip() + "…" if len(head) > 200 else head]
+    # Ensure 3–5 bullets if possible by splitting long bullet fragments.
+    bullets = bullets[:5]
+    return _format_bullets(bullets[: max(3, min(5, len(bullets)))])
+
+
 @dataclass(frozen=True, slots=True)
 class _LLM:
     provider: str
@@ -295,5 +326,46 @@ def generate_summary(
         progress=use_progress,
         progress_every_chunks=progress_every,
     )
+
+
+def ensure_source_version_summary(
+    *,
+    db: Database,
+    source_version_id: str,
+    content: str,
+    force: bool = False,
+    provider: str = "anthropic",
+    model: str | None = None,
+    max_content_chars: int = 12000,
+    progress: Callable[[str], None] | None = None,
+) -> str | None:
+    """
+    Ensure `source_versions.summary` is populated for a given version.
+
+    If LLM summarization fails or returns empty, persists a deterministic fallback summary.
+    """
+    sv = db.get_source_version_by_id(source_version_id)
+    if sv is None:
+        return None
+    if (sv.summary or "").strip() and not force:
+        return sv.summary
+
+    summary = ""
+    try:
+        summary = generate_summary(
+            content=content or "",
+            provider=provider,
+            model=model,
+            max_content_chars=max_content_chars,
+            progress=progress,
+        )
+    except Exception:
+        summary = ""
+    summary = (summary or "").strip()
+    if not summary:
+        summary = _fallback_summary(content or "")
+
+    db.set_source_version_summary(source_version_id=source_version_id, summary=summary)
+    return summary
 
 

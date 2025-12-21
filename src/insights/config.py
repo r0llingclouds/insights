@@ -15,7 +15,8 @@ class Paths:
 
 
 def default_app_dir() -> Path:
-    return Path.home() / ".insights"
+    # Keep things simple: default to a stable, user-visible location.
+    return Path.home() / "Documents" / "insights"
 
 
 def ensure_dirs(paths: Paths) -> None:
@@ -27,7 +28,7 @@ def load_env(app_dir: Path) -> None:
     """
     Load environment variables from:
     - cwd/.env
-    - ~/.insights/.env
+    - ~/Documents/insights/.env (or the resolved app_dir)
     """
     load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
     load_dotenv(dotenv_path=app_dir / ".env", override=False)
