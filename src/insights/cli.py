@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import re
 from typing import Annotated
+from typing import Any
 
 import typer
 from typer.core import TyperGroup
@@ -16,7 +17,7 @@ from insights.chat.session import ChatRunConfig, run_chat
 from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.ingest.detect import detect_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
-from insights.retrieval import ContextMode, build_context
+from insights.retrieval import build_context
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
 from insights.utils.progress import make_progress_printer
@@ -1015,12 +1016,13 @@ def ask(
     system = (
         "You are a precise assistant. Answer using ONLY the provided sources. "
         "If the sources do not contain the answer, say what is missing. "
-        "When sources are chunked, cite them as Source + chunk number."
+        "Cite sources by name when relevant."
     )
     user = f"Sources context:\n\n{context.context_text}\n\nQuestion:\n{question}".strip()
     messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
 
     provider_norm = provider.strip().lower()
+    client: Any
     if provider_norm == "openai":
         client = OpenAIClient()
         used_model = model or "gpt-4o-mini"
@@ -1061,15 +1063,7 @@ def ask(
         markup=False,
         highlight=False,
     )
-    if context.mode == ContextMode.RETRIEVAL and context.retrieved_chunks:
-        console.print("\nSources:", markup=False, highlight=False)
-        for rc in context.retrieved_chunks:
-            title = rc.source.title or rc.source.locator
-            console.print(
-                f"- {title} ({rc.source.locator}) chunk={rc.chunk_index}",
-                markup=False,
-                highlight=False,
-            )
+    # FULL-only context: no chunk citations.
 
 
 @app.command()

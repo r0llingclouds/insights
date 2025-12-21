@@ -35,13 +35,6 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
-@dataclass(frozen=True, slots=True)
-class FtsMatch:
-    chunk_id: str
-    document_id: str
-    score: float
-
-
 class Database:
     """
     Thin, typed layer over sqlite3.
@@ -104,18 +97,6 @@ class Database:
                     "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?);",
                     (mig.version, mig.name, _dt_to_iso(_utcnow())),
                 )
-
-        # Validate FTS5 exists early so later retrieval errors are clearer.
-        self._assert_fts5_available()
-
-    def _assert_fts5_available(self) -> None:
-        try:
-            self._conn.execute("SELECT 1 FROM chunks_fts LIMIT 1;").fetchone()
-        except sqlite3.OperationalError as e:
-            raise RuntimeError(
-                "SQLite FTS5 is required but not available in this SQLite build. "
-                "Install a Python/SQLite build with FTS5 enabled."
-            ) from e
 
     # -----------------
     # Sources & versions
@@ -365,60 +346,6 @@ class Database:
         row = self._conn.execute("SELECT * FROM documents WHERE id = ?;", (document_id,)).fetchone()
         return dict(row) if row else None
 
-    def replace_chunks(self, *, document_id: str, chunks: Sequence[str]) -> None:
-        with self.transaction():
-            # Contentless FTS table isn't linked to `chunks`, so delete from both.
-            self._conn.execute("DELETE FROM chunks_fts WHERE document_id = ?;", (document_id,))
-            self._conn.execute("DELETE FROM chunks WHERE document_id = ?;", (document_id,))
-
-            rows_to_insert: list[tuple[str, str, int, str]] = []
-            fts_rows: list[tuple[str, str, str]] = []
-            for idx, text in enumerate(chunks):
-                chunk_id = _new_id()
-                rows_to_insert.append((chunk_id, document_id, idx, text))
-                fts_rows.append((text, chunk_id, document_id))
-
-            self._conn.executemany(
-                "INSERT INTO chunks(id, document_id, chunk_index, text) VALUES (?, ?, ?, ?);",
-                rows_to_insert,
-            )
-            self._conn.executemany(
-                "INSERT INTO chunks_fts(text, chunk_id, document_id) VALUES (?, ?, ?);",
-                fts_rows,
-            )
-
-    def chunk_count(self, *, document_id: str) -> int:
-        row = self._conn.execute(
-            "SELECT COUNT(1) AS c FROM chunks WHERE document_id = ?;",
-            (document_id,),
-        ).fetchone()
-        return int(row["c"]) if row else 0
-
-    def search_chunks_fts(self, *, query: str, document_ids: Sequence[str], limit: int) -> list[FtsMatch]:
-        if not document_ids:
-            return []
-        placeholders = ",".join("?" for _ in document_ids)
-        sql = f"""
-        SELECT chunk_id, document_id, bm25(chunks_fts) AS score
-        FROM chunks_fts
-        WHERE chunks_fts MATCH ?
-          AND document_id IN ({placeholders})
-        ORDER BY score
-        LIMIT ?;
-        """
-        params: list[Any] = [query, *document_ids, limit]
-        rows = self._conn.execute(sql, params).fetchall()
-        return [FtsMatch(chunk_id=str(r["chunk_id"]), document_id=str(r["document_id"]), score=float(r["score"])) for r in rows]
-
-    def get_chunks_by_ids(self, chunk_ids: Sequence[str]) -> list[dict[str, Any]]:
-        if not chunk_ids:
-            return []
-        placeholders = ",".join("?" for _ in chunk_ids)
-        rows = self._conn.execute(
-            f"SELECT * FROM chunks WHERE id IN ({placeholders});",
-            list(chunk_ids),
-        ).fetchall()
-        return [dict(r) for r in rows]
 
     def get_documents_for_sources_latest(
         self,

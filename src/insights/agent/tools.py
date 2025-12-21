@@ -872,7 +872,7 @@ class ToolRunner:
         system = (
             "You are a precise assistant. Answer using ONLY the provided sources. "
             "If the sources do not contain the answer, say what is missing. "
-            "When sources are chunked, cite them as Source + chunk number."
+            "Cite sources by name when relevant."
         )
         user_payload = f"Sources context:\n\n{context.context_text}\n\nQuestion:\n{q}".strip()
         messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user_payload)]

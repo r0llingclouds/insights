@@ -69,23 +69,6 @@ MIGRATIONS: list[Migration] = [
               ON documents(source_version_id);
             """,
             """
-            CREATE TABLE IF NOT EXISTS chunks (
-              id TEXT PRIMARY KEY,
-              document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-              chunk_index INTEGER NOT NULL,
-              text TEXT NOT NULL,
-              UNIQUE(document_id, chunk_index)
-            );
-            """,
-            """
-            CREATE INDEX IF NOT EXISTS idx_chunks_document_id
-              ON chunks(document_id);
-            """,
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
-              USING fts5(text, chunk_id UNINDEXED, document_id UNINDEXED);
-            """,
-            """
             CREATE TABLE IF NOT EXISTS conversations (
               id TEXT PRIMARY KEY,
               title TEXT,
@@ -146,6 +129,16 @@ MIGRATIONS: list[Migration] = [
         statements=(
             # `token_estimate` is now computed exactly (tiktoken); rename for clarity.
             "ALTER TABLE documents RENAME COLUMN token_estimate TO token_count;",
+        ),
+    ),
+    Migration(
+        version=6,
+        name="drop_fts_tables",
+        statements=(
+            # FTS/retrieval mode removed; drop chunk + FTS artifacts.
+            "DROP TABLE IF EXISTS chunks_fts;",
+            "DROP TABLE IF EXISTS chunks;",
+            "DROP TABLE IF EXISTS document_chunking_meta;",
         ),
     ),
 ]

@@ -325,11 +325,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summariz
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summarize." --provider anthropic --model claude-3-5-sonnet-latest
 ```
 
-Force retrieval mode (FTS5) for testing by making the context budget tiny:
-
-```bash
-uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "What does it say about pricing?" --max-context-tokens 50
-```
+Note: Insights always builds a FULL source context (with trimming) for chat/Q&A.
 
 Ask options:
 - `-s/--source` (repeatable)
@@ -340,6 +336,9 @@ Ask options:
 - `--max-context-tokens N`
 - `--max-output-tokens N`
 - `--temperature FLOAT`
+
+Context trimming (applies to `ask`/`chat`, not summarization):
+- `INSIGHTS_MAX_CONTEXT_CHARS` (default: `400000`) — per-source max chars used to build LLM context (head-trim)
 
 #### Interactive chat (persistent)
 
@@ -380,6 +379,9 @@ Chat options:
 - `--max-context-tokens N`
 - `--max-output-tokens N`
 - `--temperature FLOAT`
+
+Context trimming (applies to `ask`/`chat`, not summarization):
+- `INSIGHTS_MAX_CONTEXT_CHARS` (default: `400000`) — per-source max chars used to build LLM context (head-trim)
 
 #### List conversations (grouped by source)
 

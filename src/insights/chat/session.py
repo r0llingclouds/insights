@@ -9,7 +9,7 @@ from rich.console import Console
 
 from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
-from insights.retrieval import ContextMode, build_context
+from insights.retrieval import build_context
 from insights.storage.db import Database
 from insights.storage.models import MessageRole, Source
 from insights.utils.progress import make_progress_printer
@@ -134,7 +134,7 @@ def run_chat(
     system = (
         "You are a precise assistant. Answer using ONLY the provided sources. "
         "If the sources do not contain the answer, say what is missing. "
-        "When sources are chunked, cite them as Source + chunk number."
+        "Cite sources by name when relevant."
     )
 
     client, used_model = _pick_llm(config.provider, config.model)
@@ -297,14 +297,6 @@ def run_chat(
             )
 
             console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
-            if context.mode == ContextMode.RETRIEVAL and context.retrieved_chunks:
-                console.print("\nSources:", markup=False, highlight=False)
-                for rc in context.retrieved_chunks:
-                    title = rc.source.title or rc.source.locator
-                    console.print(
-                        f"- {title} ({rc.source.locator}) chunk={rc.chunk_index}",
-                        markup=False,
-                        highlight=False,
-                    )
+            # FULL-only context: no chunk citations.
 
 

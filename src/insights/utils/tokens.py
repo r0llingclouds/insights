@@ -21,6 +21,24 @@ def estimate_tokens(text: str) -> int:
     return len(enc.encode(text))
 
 
+def truncate_to_tokens(text: str, max_tokens: int) -> str:
+    """
+    Truncate text to at most max_tokens tokens using the configured tiktoken encoding.
+
+    This is used to enforce a hard context budget for FULL-mode prompting.
+    """
+    if not text:
+        return ""
+    mt = int(max_tokens)
+    if mt <= 0:
+        return ""
+    enc = _get_encoding()
+    toks = enc.encode(text)
+    if len(toks) <= mt:
+        return text
+    return enc.decode(toks[:mt])
+
+
 @lru_cache(maxsize=1)
 def _get_encoding():
     try:

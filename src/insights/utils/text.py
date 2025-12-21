@@ -14,7 +14,7 @@ _RE_HRULE = re.compile(r"^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$", re.MULTILINE)
 
 def markdown_to_text(md: str) -> str:
     """
-    Best-effort Markdown → plain text normalization for retrieval/LLM context.
+    Best-effort Markdown → plain text normalization for LLM context.
     Keeps code content by stripping fences but not dropping inner text.
     """
     # Replace images with alt text.
