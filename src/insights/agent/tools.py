@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from insights.text_export import AmbiguousSourceRefError, default_downloads_dir, export_source_text
 from insights.config import Paths
 from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
@@ -509,6 +510,91 @@ class ToolRunner:
         finally:
             db.close()
 
+    def export_text(
+        self,
+        *,
+        source_ref: str,
+        out_dir: str | None = None,
+        backend: str | None = None,
+        refresh: bool = False,
+        name: str | None = None,
+        include_plain: bool = False,
+        include_markdown: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Export a source's plain text/transcript (and markdown when available) to files.
+
+        This writes to disk and may ingest the source if it's not cached, so it is treated as a side effect:
+        - requires allow_side_effects
+        """
+        ref = (source_ref or "").strip()
+        if not ref:
+            return {"success": False, "error": "source_ref is required"}
+
+        backend_enum = IngestBackend.DOCLING
+        if backend:
+            backend_enum = IngestBackend(backend.strip().lower())
+
+        out_path = Path(out_dir).expanduser().resolve() if out_dir else default_downloads_dir()
+
+        if not self._ctx.allow_side_effects:
+            cmd: list[str] = [
+                "uv",
+                "run",
+                "insights",
+                "--app-dir",
+                str(self._ctx.paths.app_dir),
+                "text",
+                ref,
+                "--out-dir",
+                str(out_path),
+                "--backend",
+                backend_enum.value,
+            ]
+            if refresh:
+                cmd.append("--refresh")
+            if name:
+                cmd.extend(["--name", name])
+            if not include_plain:
+                cmd.append("--no-plain")
+            if not include_markdown:
+                cmd.append("--no-markdown")
+            return {
+                "success": False,
+                "blocked": True,
+                "reason": "safe_mode",
+                "note": "Export writes files to disk and may ingest sources; run with --yes or use the proposed command.",
+                "proposed_command": " ".join(shlex.quote(c) for c in cmd),
+            }
+
+        try:
+            written = export_source_text(
+                paths=self._ctx.paths,
+                source_ref=ref,
+                out_dir=out_path,
+                backend=backend_enum,
+                refresh=bool(refresh),
+                name=name,
+                include_plain=bool(include_plain),
+                include_markdown=bool(include_markdown),
+            )
+        except AmbiguousSourceRefError as e:
+            return {
+                "success": True,
+                "ambiguous": True,
+                "ref": e.ref,
+                "suggestions": [
+                    {
+                        "id": s.id,
+                        "kind": s.kind,
+                        "title": s.title,
+                        "locator": s.locator,
+                    }
+                    for s in e.suggestions
+                ],
+            }
+        return {"success": True, "written_files": [str(p) for p in written]}
+
     def ingest_source(
         self,
         *,
@@ -737,6 +823,7 @@ class ToolRunner:
             "search_conversations": self.search_conversations,
             "get_conversation_info": self.get_conversation_info,
             "start_chat": self.start_chat,
+            "export_text": self.export_text,
             "ingest_source": self.ingest_source,
             "ask_source": self.ask_source,
         }.get(name)
@@ -845,6 +932,23 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "max_output_tokens": {"type": "integer", "description": "Max output tokens"},
                 "temperature": {"type": "number", "description": "Sampling temperature"},
             },
+        },
+    },
+    {
+        "name": "export_text",
+        "description": "Export a source's plain text/transcript (and markdown when available) to files (default ~/Downloads). In safe-mode it returns a proposed CLI command.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_ref": {"type": "string", "description": "Source id/url/path/title/basename"},
+                "out_dir": {"type": "string", "description": "Output directory path (default ~/Downloads)"},
+                "backend": {"type": "string", "enum": ["docling", "firecrawl"], "description": "URL backend when ingesting"},
+                "refresh": {"type": "boolean", "description": "Force re-ingest"},
+                "name": {"type": "string", "description": "Optional base filename override"},
+                "include_plain": {"type": "boolean", "description": "Write .txt (default true)"},
+                "include_markdown": {"type": "boolean", "description": "Write .md when available (default true)"},
+            },
+            "required": ["source_ref"],
         },
     },
     {

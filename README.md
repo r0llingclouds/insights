@@ -249,6 +249,29 @@ Old flat summary table:
 uv run insights --app-dir "$INSIGHTS_APP_DIR" conversations --flat
 ```
 
+#### Export plain text / transcript (and markdown) to files
+
+Export the cached **markdown** to a `.md` file under `~/Downloads` by default (falls back to plain text/transcript if markdown is not available):
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" text 830eb7dfaaac428a87fb2dae2e80a2a5
+```
+
+You can also reference sources by URL or basename/title:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" text "https://www.youtube.com/watch?v=VIDEO_ID"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" text "https://example.com/article"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" text "onepager.pdf"
+```
+
+Options:
+- `--out-dir PATH` (default `~/Downloads`)
+- `--backend docling|firecrawl` (when ingesting URLs)
+- `--refresh` (force re-ingest)
+- `--name NAME` (override the output filename base)
+- `--no-markdown` (disable markdown export)\n+- `--include-plain` (also write a `.txt` file)
+
 ### Inspecting the DB directly (sqlite3)
 
 List sources:

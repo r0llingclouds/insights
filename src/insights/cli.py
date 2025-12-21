@@ -863,3 +863,61 @@ if __name__ == "__main__":
     main()
 
 
+@app.command("text")
+def export_text(
+    ctx: typer.Context,
+    source_ref: Annotated[str, typer.Argument(help="Source id/url/path/title/basename to export.")],
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Output directory (default: ~/Downloads)."),
+    ] = None,  # resolved at runtime (default: ~/Downloads)
+    backend: Annotated[
+        IngestBackend,
+        typer.Option("--backend", help="Backend for URL ingestion when ingesting."),
+    ] = IngestBackend.DOCLING,
+    refresh: Annotated[bool, typer.Option("--refresh", help="Force re-ingestion.")] = False,
+    name: Annotated[str | None, typer.Option("--name", help="Optional base filename override.")] = None,
+    include_plain: Annotated[
+        bool,
+        typer.Option("--include-plain/--no-plain", help="Write plain text (.txt)."),
+    ] = False,
+    include_markdown: Annotated[
+        bool,
+        typer.Option("--include-markdown/--no-markdown", help="Write markdown (.md). If markdown isn't available, falls back to plain text/transcript."),
+    ] = True,
+) -> None:
+    """
+    Export a source's cached plain text/transcript (and markdown when available) to files.
+
+    - Resolves by source id / URL / title / file basename
+    - Auto-ingests if not cached
+    - Default output dir: ~/Downloads
+    """
+    ref = (source_ref or "").strip()
+    if not ref:
+        raise typer.BadParameter("source_ref cannot be empty")
+
+    paths = ctx.obj["paths"]
+    from insights.text_export import AmbiguousSourceRefError, default_downloads_dir, export_source_text
+
+    try:
+        written = export_source_text(
+            paths=paths,
+            source_ref=ref,
+            out_dir=out_dir or default_downloads_dir(),
+            backend=backend,
+            refresh=refresh,
+            name=name,
+            include_plain=include_plain,
+            include_markdown=include_markdown,
+        )
+    except AmbiguousSourceRefError as e:
+        err_console.print("Ambiguous source reference. Did you mean:", markup=False, highlight=False)
+        for s in e.suggestions:
+            err_console.print(f"- {s.id} {s.kind} {s.title or ''} {s.locator}", markup=False, highlight=False)
+        raise typer.Exit(code=2) from e
+
+    for p in written:
+        console.print(str(p), markup=False, highlight=False)
+
+

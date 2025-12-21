@@ -340,6 +340,13 @@ class Database:
         ).fetchone()
         return str(row["plain_text"]) if row else None
 
+    def get_document_markdown_by_source_version(self, source_version_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT markdown FROM documents WHERE source_version_id = ?;",
+            (source_version_id,),
+        ).fetchone()
+        return str(row["markdown"]) if row else None
+
     def get_document_id_by_source_version(self, source_version_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT id FROM documents WHERE source_version_id = ?;",
@@ -470,6 +477,52 @@ class Database:
                 v.pop("_pref_rank", None)
                 out.append(v)
         return out
+
+    def get_latest_document_for_source(
+        self,
+        *,
+        source_id: str,
+        extractor_preference: Sequence[str],
+    ) -> dict[str, Any] | None:
+        """
+        Returns a dict containing:
+        - document_id, source_version_id, extractor, extracted_at
+        - plain_text, markdown, token_estimate, char_count
+
+        If multiple extractors exist, the first matching extractor_preference wins.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT sv.source_id,
+                   sv.id AS source_version_id,
+                   sv.extractor,
+                   sv.extracted_at,
+                   d.id AS document_id,
+                   d.markdown,
+                   d.plain_text,
+                   d.char_count,
+                   d.token_estimate
+            FROM source_versions sv
+            JOIN documents d ON d.source_version_id = sv.id
+            WHERE sv.source_id = ?
+              AND sv.status = 'ok'
+            ORDER BY sv.extracted_at DESC;
+            """,
+            (source_id,),
+        ).fetchall()
+        if not rows:
+            return None
+
+        pref_rank = {name: i for i, name in enumerate(extractor_preference)}
+        best: dict[str, Any] | None = None
+        best_rank = 999
+        for r in rows:
+            extractor = str(r["extractor"])
+            rank = pref_rank.get(extractor, 999)
+            if best is None or rank < best_rank:
+                best = dict(r)
+                best_rank = rank
+        return best
 
     # -----------------
     # Conversations & messages
