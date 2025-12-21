@@ -201,7 +201,7 @@ Overrides:
 - You can change the cutoff:
 
 ```bash
-export INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS=10000
+export INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS=30000
 ```
 
 ### Commands
