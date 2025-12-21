@@ -9,6 +9,7 @@ from insights.config import Paths
 from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
+from insights.utils.progress import ProgressFn
 
 
 def default_downloads_dir() -> Path:
@@ -54,6 +55,7 @@ def export_source_text(
     name: str | None = None,
     include_plain: bool = False,
     include_markdown: bool = True,
+    progress: ProgressFn | None = None,
 ) -> list[Path]:
     """
     Resolve/ingest a source and write its cached plain_text (.txt) and markdown (.md) to files.
@@ -102,6 +104,7 @@ def export_source_text(
                 url_backend=backend,
                 refresh=bool(refresh),
                 title=None,
+                summary_progress=progress,
             )
             source = result.source
             source_version_id = result.source_version.id
@@ -144,11 +147,15 @@ def export_source_text(
             md_path = (out_file.expanduser().resolve() if out_file else (out_dir_resolved / f"{stem}.md"))
             # Always write a markdown file; if markdown is empty, fall back to plain text/transcript.
             md_content = markdown or plain_text
+            if progress is not None:
+                progress(f"writing export: {md_path}")
             md_path.write_text(md_content + ("\n" if md_content and not md_content.endswith("\n") else ""), encoding="utf-8")
             written.append(md_path)
 
         if include_plain:
             txt_path = out_dir_resolved / f"{stem}.txt"
+            if progress is not None:
+                progress(f"writing export: {txt_path}")
             txt_path.write_text(
                 plain_text + ("\n" if plain_text and not plain_text.endswith("\n") else ""),
                 encoding="utf-8",

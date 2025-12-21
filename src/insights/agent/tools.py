@@ -16,6 +16,7 @@ from insights.storage.models import Source, SourceKind
 from insights.agent.resolve import resolve_source as resolve_source_any
 from insights.chat.session import ChatRunConfig, run_chat
 from insights.chat.save import save_one_shot_qa
+from insights.utils.progress import make_progress_printer
 
 
 Provider = Literal["openai", "anthropic"]
@@ -667,6 +668,7 @@ class ToolRunner:
             }
 
         try:
+            progress = make_progress_printer(prefix="insights")
             written = export_source_text(
                 paths=self._ctx.paths,
                 source_ref=ref,
@@ -677,6 +679,7 @@ class ToolRunner:
                 name=name,
                 include_plain=bool(include_plain),
                 include_markdown=bool(include_markdown),
+                progress=progress,
             )
         except AmbiguousSourceRefError as e:
             return {
@@ -796,6 +799,7 @@ class ToolRunner:
 
         db = Database.open(self._ctx.paths.db_path)
         try:
+            progress = make_progress_printer(prefix="insights")
             resolved = resolve_source_any(db=db, ref=source_ref, suggestions_limit=5)
             if resolved.ambiguous:
                 return {
@@ -860,6 +864,7 @@ class ToolRunner:
                 source_ids=[src.id],
                 question=q,
                 max_context_tokens=max(500, int(max_context_tokens)),
+                progress=progress,
             )
         finally:
             db.close()

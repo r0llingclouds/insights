@@ -12,6 +12,7 @@ from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.retrieval import ContextMode, build_context
 from insights.storage.db import Database
 from insights.storage.models import MessageRole, Source
+from insights.utils.progress import make_progress_printer
 
 console = Console(highlight=False)
 
@@ -107,6 +108,7 @@ def run_chat(
     sources: list[str],
     config: ChatRunConfig,
 ) -> None:
+    progress = make_progress_printer(prefix="insights")
     if conversation_id:
         conv = db.get_conversation(conversation_id)
         conv_id = conv.id
@@ -231,6 +233,7 @@ def run_chat(
 
                     # Build minimal Paths for exporter.
                     paths = Paths(app_dir=db.path.parent, db_path=db.path, cache_dir=cache_dir)
+                    progress = make_progress_printer(prefix="insights")
                     for s in bound:
                         written = export_source_text(
                             paths=paths,
@@ -239,6 +242,7 @@ def run_chat(
                             include_markdown=True,
                             include_plain=False,
                             refresh=False,
+                            progress=progress,
                         )
                         for p in written:
                             console.print(str(p), markup=False, highlight=False)
@@ -260,6 +264,7 @@ def run_chat(
                 source_ids=[s.id for s in bound_sources],
                 question=text,
                 max_context_tokens=config.max_context_tokens,
+                progress=progress,
             )
 
             history = db.list_messages(conversation_id=conv_id)

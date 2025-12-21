@@ -19,18 +19,36 @@ from insights.utils.tokens import estimate_tokens
 logger = logging.getLogger(__name__)
 
 
-def _require_description(*, db: Database, source_id: str, source_version_id: str | None, force: bool) -> None:
+def _p(progress: Callable[[str], None] | None, msg: str) -> None:
+    if progress is None:
+        return
+    try:
+        progress(msg)
+    except Exception:
+        return
+
+
+def _require_description(
+    *,
+    db: Database,
+    source_id: str,
+    source_version_id: str | None,
+    force: bool,
+    progress: Callable[[str], None] | None,
+) -> None:
     """
     Ensure sources.description is populated as part of ingestion (critical-path).
     """
     from insights.describe import ensure_source_description
 
+    _p(progress, "describing: start")
     desc = ensure_source_description(
         db=db,
         source_id=source_id,
         source_version_id=source_version_id,
         force=force,
     )
+    _p(progress, "describing: done")
     if not desc:
         raise RuntimeError("Description generation failed (sources.description is empty)")
 
@@ -130,7 +148,13 @@ def _ingest_file(
         if existing and existing.status == "ok":
             doc_id = db.get_document_id_by_source_version(existing.id)
             if doc_id:
-                _require_description(db=db, source_id=source.id, source_version_id=existing.id, force=False)
+                _require_description(
+                    db=db,
+                    source_id=source.id,
+                    source_version_id=existing.id,
+                    force=False,
+                    progress=summary_progress,
+                )
                 return IngestResult(
                     source=source,
                     source_version=existing,
@@ -139,7 +163,9 @@ def _ingest_file(
                 )
 
     try:
+        _p(summary_progress, f"extracting (docling): {path}")
         markdown = extract_markdown_with_docling(str(path))
+        _p(summary_progress, "extracting (docling): done")
         plain = markdown_to_text(markdown)
         token_est = estimate_tokens(plain)
         version = db.create_source_version(
@@ -160,12 +186,20 @@ def _ingest_file(
             if not version.summary:
                 from insights.summarize import generate_summary
 
+                _p(summary_progress, "summarizing: start")
                 summary = generate_summary(content=plain, progress=summary_progress)
+                _p(summary_progress, "summarizing: done")
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
-        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
+        _require_description(
+            db=db,
+            source_id=source.id,
+            source_version_id=version.id,
+            force=bool(refresh),
+            progress=summary_progress,
+        )
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -199,11 +233,19 @@ def _ingest_url_docling(
             extractor_preference=[extractor, "firecrawl"],
         )
         if cached is not None:
-            _require_description(db=db, source_id=cached.source.id, source_version_id=cached.source_version.id, force=False)
+            _require_description(
+                db=db,
+                source_id=cached.source.id,
+                source_version_id=cached.source_version.id,
+                force=False,
+                progress=summary_progress,
+            )
             return cached
 
     try:
+        _p(summary_progress, f"extracting (docling): {url}")
         markdown = extract_markdown_with_docling(url)
+        _p(summary_progress, "extracting (docling): done")
         plain = markdown_to_text(markdown)
         content_hash = sha256_text(markdown)
         token_est = estimate_tokens(plain)
@@ -224,12 +266,20 @@ def _ingest_url_docling(
             if not version.summary:
                 from insights.summarize import generate_summary
 
+                _p(summary_progress, "summarizing: start")
                 summary = generate_summary(content=plain, progress=summary_progress)
+                _p(summary_progress, "summarizing: done")
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
-        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
+        _require_description(
+            db=db,
+            source_id=source.id,
+            source_version_id=version.id,
+            force=bool(refresh),
+            progress=summary_progress,
+        )
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -263,11 +313,19 @@ def _ingest_url_firecrawl(
             extractor_preference=[extractor, "docling"],
         )
         if cached is not None:
-            _require_description(db=db, source_id=cached.source.id, source_version_id=cached.source_version.id, force=False)
+            _require_description(
+                db=db,
+                source_id=cached.source.id,
+                source_version_id=cached.source_version.id,
+                force=False,
+                progress=summary_progress,
+            )
             return cached
 
     try:
+        _p(summary_progress, f"extracting (firecrawl): {url}")
         markdown = extract_markdown_with_firecrawl(url)
+        _p(summary_progress, "extracting (firecrawl): done")
         plain = markdown_to_text(markdown)
         content_hash = sha256_text(markdown)
         token_est = estimate_tokens(plain)
@@ -288,12 +346,20 @@ def _ingest_url_firecrawl(
             if not version.summary:
                 from insights.summarize import generate_summary
 
+                _p(summary_progress, "summarizing: start")
                 summary = generate_summary(content=plain, progress=summary_progress)
+                _p(summary_progress, "summarizing: done")
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
-        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
+        _require_description(
+            db=db,
+            source_id=source.id,
+            source_version_id=version.id,
+            force=bool(refresh),
+            progress=summary_progress,
+        )
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
@@ -350,7 +416,13 @@ def _ingest_youtube_assemblyai(
         if existing and existing.status == "ok":
             doc_id = db.get_document_id_by_source_version(existing.id)
             if doc_id:
-                _require_description(db=db, source_id=source.id, source_version_id=existing.id, force=False)
+                _require_description(
+                    db=db,
+                    source_id=source.id,
+                    source_version_id=existing.id,
+                    force=False,
+                    progress=summary_progress,
+                )
                 return IngestResult(
                     source=source,
                     source_version=existing,
@@ -359,12 +431,16 @@ def _ingest_youtube_assemblyai(
                 )
 
     try:
+        _p(summary_progress, f"downloading (yt-dlp): {video_id}")
         audio_path, yt_title = download_youtube_audio(video_id=video_id, cache_dir=cache_dir, refresh=refresh)
+        _p(summary_progress, "downloading (yt-dlp): done")
         if not source.title and yt_title:
             source = db.upsert_source(kind=SourceKind.YOUTUBE, locator=video_id, title=yt_title)
 
         audio_hash = sha256_file(audio_path)
+        _p(summary_progress, f"transcribing (assemblyai): {audio_path.name}")
         text = transcribe_with_assemblyai(audio_path=audio_path)
+        _p(summary_progress, "transcribing (assemblyai): done")
         markdown = text.strip()
         plain = markdown
         token_est = estimate_tokens(plain)
@@ -386,12 +462,20 @@ def _ingest_youtube_assemblyai(
             if not version.summary:
                 from insights.summarize import generate_summary
 
+                _p(summary_progress, "summarizing: start")
                 summary = generate_summary(content=plain, progress=summary_progress)
+                _p(summary_progress, "summarizing: done")
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
             pass
-        _require_description(db=db, source_id=source.id, source_version_id=version.id, force=bool(refresh))
+        _require_description(
+            db=db,
+            source_id=source.id,
+            source_version_id=version.id,
+            force=bool(refresh),
+            progress=summary_progress,
+        )
         return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"

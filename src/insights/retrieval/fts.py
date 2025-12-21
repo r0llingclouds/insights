@@ -3,11 +3,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable
 
 from insights.storage.db import Database
 from insights.storage.models import Source
 from insights.utils.tokens import estimate_tokens
+
+ProgressFn = Callable[[str], None]
 
 
 class ContextMode(StrEnum):
@@ -106,11 +108,19 @@ def _ensure_indexed(
     plain_text: str,
     max_chunk_tokens: int,
     overlap_tokens: int,
+    progress: ProgressFn | None = None,
 ) -> None:
     if db.chunk_count(document_id=document_id) > 0:
         return
+    if progress is not None:
+        progress(f"chunkerizing: start (document_id={document_id})")
     chunks = chunk_text(plain_text, max_chunk_tokens=max_chunk_tokens, overlap_tokens=overlap_tokens)
+    if progress is not None:
+        progress(f"chunkerizing: splitting into {len(chunks)} chunks")
+        progress("chunkerizing: inserting chunks into FTS")
     db.replace_chunks(document_id=document_id, chunks=chunks)
+    if progress is not None:
+        progress("chunkerizing: done")
 
 
 def build_context(
@@ -123,6 +133,7 @@ def build_context(
     retrieval_top_k: int = 10,
     max_chunk_tokens: int = 800,
     overlap_tokens: int = 100,
+    progress: ProgressFn | None = None,
 ) -> ContextBuildResult:
     """
     Build an LLM-ready context for a set of sources.
@@ -176,6 +187,7 @@ def build_context(
             plain_text=str(d["plain_text"]),
             max_chunk_tokens=max_chunk_tokens,
             overlap_tokens=overlap_tokens,
+            progress=progress,
         )
 
     fts_query = _fts_query_from_question(question)

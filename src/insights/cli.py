@@ -19,6 +19,7 @@ from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.retrieval import ContextMode, build_context
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
+from insights.utils.progress import make_progress_printer
 
 
 class _InsightsDefaultGroup(TyperGroup):
@@ -889,11 +890,13 @@ def ask(
                 logger.debug("Title generation failed for source_id=%s: %s", ingested.source.id, e)
             source_ids.append(ingested.source.id)
 
+        progress = make_progress_printer(prefix="insights")
         context = build_context(
             db=db,
             source_ids=source_ids,
             question=question,
             max_context_tokens=max_context_tokens,
+            progress=progress,
         )
     finally:
         db.close()
@@ -1066,6 +1069,7 @@ def export_text(
         raise typer.BadParameter("--out-file writes a single .md; combine with --no-plain (default) or omit --include-plain.")
 
     try:
+        progress = make_progress_printer(prefix="insights")
         written = export_source_text(
             paths=paths,
             source_ref=ref,
@@ -1076,6 +1080,7 @@ def export_text(
             name=name,
             include_plain=include_plain,
             include_markdown=include_markdown,
+            progress=progress,
         )
     except AmbiguousSourceRefError as e:
         err_console.print("Ambiguous source reference. Did you mean:", markup=False, highlight=False)
