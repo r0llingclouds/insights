@@ -306,6 +306,10 @@ def list_sources(
         typer.Option("--kind", help="Filter by kind: file|url|youtube"),
     ] = None,
     limit: Annotated[int, typer.Option("--limit", help="Max rows to show.")] = 100,
+    show_description: Annotated[
+        bool,
+        typer.Option("--show-description", help="Include a description column (truncated) in table output."),
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
 ) -> None:
     """List ingested sources stored in the database."""
@@ -335,6 +339,7 @@ def list_sources(
                     "kind": s.kind.value,
                     "title": s.title,
                     "locator": s.locator,
+                    "description": s.description,
                     "created_at": s.created_at.isoformat(),
                     "updated_at": s.updated_at.isoformat(),
                 }
@@ -345,11 +350,21 @@ def list_sources(
         )
         return
 
+    def _excerpt(text: str | None, n: int = 120) -> str:
+        if not text:
+            return ""
+        collapsed = " ".join(str(text).split())
+        if len(collapsed) <= n:
+            return collapsed
+        return collapsed[: max(0, n - 1)].rstrip() + "…"
+
     table = Table(title=f"Sources ({len(sources)})", show_lines=False)
     table.add_column("id", no_wrap=True)
     table.add_column("kind", no_wrap=True)
     table.add_column("title")
     table.add_column("locator")
+    if show_description:
+        table.add_column("description")
     table.add_column("updated_at", no_wrap=True)
     for s in sources:
         table.add_row(
@@ -357,6 +372,7 @@ def list_sources(
             s.kind.value,
             s.title or "",
             s.locator,
+            _excerpt(s.description) if show_description else None,
             s.updated_at.isoformat(),
         )
     console.print(table)
