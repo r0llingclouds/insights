@@ -5,7 +5,7 @@ Ingest **local documents**, **web pages**, and **YouTube videos** into cached pl
 ### Install (uv)
 
 ```bash
-cd /Users/tirso.lopez/Documents/insights
+cd ~/Documents/insights
 uv sync
 ```
 
@@ -61,7 +61,7 @@ Many commands accept a “source ref”, which can be:
 - **source id**: `830eb7dfaaac428a87fb2dae2e80a2a5`
 - **URL**: `https://example.com/article`
 - **YouTube URL**: `https://www.youtube.com/watch?v=VIDEO_ID` (internally stored as video id)
-- **local file path**: `/Users/tirso.lopez/Desktop/onepager.pdf`
+- **local file path**: `~/Desktop/onepager.pdf`
 - **basename / title fragment**: `onepager.pdf` (if ambiguous, you’ll be prompted to pick one)
 
 ### Natural-language agent (Anthropic tool-use)
@@ -401,7 +401,7 @@ Filter to one source (id, path, or URL):
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" conversations --source 830eb7dfaaac428a87fb2dae2e80a2a5
-uv run insights --app-dir "$INSIGHTS_APP_DIR" conversations --source "/Users/tirso.lopez/Desktop/onepager.pdf"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" conversations --source "~/Desktop/onepager.pdf"
 ```
 
 Tune output:
