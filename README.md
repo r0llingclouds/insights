@@ -174,6 +174,12 @@ Backfill options:
 - `--model MODEL`
 - `--max-content-chars N`
 
+### Large document optimization (auto-switch to Haiku)
+
+When generating **summaries**, **descriptions**, or **titles**, if the source content exceeds **10,000 characters**, Insights automatically uses **`claude-haiku-4-5`** (cheaper) for that generation.\n\nOverrides:\n- If you set one of the model env vars (`INSIGHTS_SUMMARY_MODEL`, `INSIGHTS_DESCRIBE_MODEL`, `INSIGHTS_TITLE_MODEL`), that model is always used (no auto-switch).\n- You can change the cutoff:\n+\n+```bash
+export INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS=10000
+```
+
 ### Commands
 
 #### Ingest sources

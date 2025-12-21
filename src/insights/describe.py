@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
+from insights.llm.routing import pick_anthropic_model
 from insights.storage.db import Database
 
 
@@ -35,14 +36,22 @@ def generate_description(
     """
     Generate a short, searchable one-liner description for content.
     """
+    content_len = len(content or "")
     p = provider.strip().lower()
     if p == "openai":
         client = OpenAIClient()
         used_model = model or "gpt-4o-mini"
     elif p == "anthropic":
         client = AnthropicClient()
-        # Default to a model we already know works in this app (agent default), but allow override.
-        used_model = model or os.getenv("INSIGHTS_DESCRIBE_MODEL") or "claude-sonnet-4-20250514"
+        if model:
+            used_model = model
+        else:
+            used_model = pick_anthropic_model(
+                env_model=os.getenv("INSIGHTS_DESCRIBE_MODEL"),
+                default_model="claude-sonnet-4-20250514",
+                content_len=content_len,
+                large_model="claude-haiku-4-5",
+            )
     else:
         raise ValueError("provider must be 'openai' or 'anthropic'")
 
