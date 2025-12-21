@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from insights.llm import ChatMessage
-from insights.summarize import MAP_SYSTEM, REDUCE_SYSTEM, SUMMARY_SYSTEM, _LLM, _parse_bullets, chunk_text, map_reduce_summary
+from insights.summarize import MAP_SYSTEM, REDUCE_SYSTEM, SUMMARY_SYSTEM, _LLM, _clean_paragraph, chunk_text, map_reduce_summary
 
 
-def test_parse_bullets_joins_wrapped_lines() -> None:
+def test_clean_paragraph_collapses_and_strips_bullets() -> None:
     raw = "- first line\ncontinued\n- second\n  wrapped too\n- third"
-    items = _parse_bullets(raw, max_bullets=10)
-    assert items == ["first line continued", "second wrapped too", "third"]
+    out = _clean_paragraph(raw)
+    assert out == "first line continued second wrapped too third"
 
 
 def test_chunk_text_raw_slicing_overlap() -> None:
@@ -42,19 +42,19 @@ class _Recorder:
         sys = messages[0].content
         user = messages[1].content
         if sys == MAP_SYSTEM:
-            # Return one bullet per chunk with its index.
+            # Return a short paragraph per chunk with its index.
             prefix = "Chunk "
             i = int(user[user.index(prefix) + len(prefix) :].split("/", 1)[0])
             self.calls.append(f"map:{i}")
-            return f"- MAP{i}"
+            return f"MAP{i} paragraph."
         if sys == REDUCE_SYSTEM:
-            # Reduce keeps unique MAP bullets and reports count.
+            # Reduce reports count.
             n = user.count("MAP")
             self.calls.append(f"reduce:{n}")
-            return f"- REDUCED{n}"
+            return f"REDUCED{n} paragraph."
         if sys == SUMMARY_SYSTEM:
             self.calls.append("single")
-            return "- SINGLE"
+            return "SINGLE paragraph."
         raise AssertionError("unexpected system prompt")
 
 
@@ -62,7 +62,7 @@ def test_map_reduce_single_chunk_uses_single_pass() -> None:
     rec = _Recorder(calls=[])
     llm = _LLM(provider="anthropic", model="stub", generate=rec.generate)
     out = map_reduce_summary(content="short text", llm=llm, chunk_chars=10_000, overlap_chars=0, reduce_batch_size=10)
-    assert out == "- SINGLE"
+    assert out == "SINGLE paragraph."
     assert rec.calls == ["single"]
 
 
@@ -72,7 +72,7 @@ def test_map_reduce_hierarchical_reduction_batches() -> None:
     rec = _Recorder(calls=[])
     llm = _LLM(provider="anthropic", model="stub", generate=rec.generate)
     out = map_reduce_summary(content=text, llm=llm, chunk_chars=120, overlap_chars=0, reduce_batch_size=2)
-    assert out.startswith("- REDUCED")
+    assert out.startswith("REDUCED")
     # Should have mapped at least 3 chunks and reduced more than once.
     assert len([c for c in rec.calls if c.startswith("map:")]) >= 3
     assert len([c for c in rec.calls if c.startswith("reduce:")]) >= 2

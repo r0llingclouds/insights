@@ -44,7 +44,8 @@ def test_ingest_sets_title_description_summary_even_when_llm_fails(monkeypatch, 
         sv = db.get_source_version_by_id(res.source_version.id)
         assert sv is not None
         assert (sv.summary or "").strip()
-        assert sv.summary.strip().startswith("- ")
+        # Paragraph summary (no bullet list).
+        assert not sv.summary.strip().startswith("- ")
     finally:
         db.close()
 

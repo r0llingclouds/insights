@@ -14,23 +14,19 @@ SUMMARY_SYSTEM = """\
 You write a compact summary of content for quick recall.
 
 Requirements:
-- 3–7 bullet points max
+- Output as ONE short paragraph (no bullets, no headings)
+- About 3–6 sentences
 - Prefer concrete facts / claims / key takeaways
 - Avoid fluff
-- Output as Markdown bullets only (lines starting with '- ')
-- Each bullet must be a SINGLE LINE (no wrapping/newlines)
-- Keep bullets short (<= 200 chars each)
-- If the document includes examples/templates, summarize the rules/requirements first
+- Keep it readable and information-dense
 """
 
 MAP_SYSTEM = """\
 You summarize ONE chunk of a larger document.
 
 Requirements:
-- 3–5 bullet points max
-- Output as Markdown bullets only (lines starting with '- ')
-- Each bullet must be a SINGLE LINE (no wrapping/newlines)
-- Keep bullets short (<= 200 chars each)
+- Output as ONE short paragraph (no bullets, no headings)
+- About 2–3 sentences
 - Prefer concrete facts / requirements / key takeaways in this chunk
 """
 
@@ -38,11 +34,9 @@ REDUCE_SYSTEM = """\
 You are combining summaries of multiple chunks of a document into a final summary.
 
 Requirements:
-- 3–7 bullet points max
-- Output as Markdown bullets only (lines starting with '- ')
-- Each bullet must be a SINGLE LINE (no wrapping/newlines)
-- Keep bullets short (<= 200 chars each)
-- Remove redundancy, keep the most important points across the whole document
+- Output as ONE short paragraph (no bullets, no headings)
+- About 3–6 sentences
+- Remove redundancy; keep the most important points across the whole document
 """
 
 
@@ -121,39 +115,26 @@ def chunk_text(
     return out
 
 
-def _parse_bullets(text: str, *, max_bullets: int) -> list[str]:
+_RE_LEADING_BULLET = re.compile(r"^\s*([-*•]\s+)+")
+
+
+def _clean_paragraph(text: str) -> str:
     """
-    Parse markdown bullets from model output; join wrapped lines into previous bullet.
-    Returns bullet strings WITHOUT the leading '- '.
+    Normalize model output into a single paragraph.
+    - Collapse newlines/whitespace
+    - Strip quotes
+    - If the model accidentally outputs bullets, remove bullet prefixes and join into one paragraph
     """
-    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
-    items: list[str] = []
-    cur: str | None = None
+    raw = (text or "").strip().strip("\"'")
+    if not raw:
+        return ""
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    cleaned_lines: list[str] = []
     for ln in lines:
-        if ln.startswith("- "):
-            if cur:
-                items.append(cur)
-            cur = ln[2:].strip()
-        else:
-            if cur is None:
-                continue
-            cur = (cur + " " + ln.lstrip("-").strip()).strip()
-    if cur:
-        items.append(cur)
-
-    cleaned: list[str] = []
-    for it in items:
-        it = it.replace("**", "")
-        it = " ".join(it.split())
-        if len(it) > 200:
-            it = it[:199].rstrip() + "…"
-        if it:
-            cleaned.append(it)
-    return cleaned[:max_bullets]
-
-
-def _format_bullets(items: list[str]) -> str:
-    return "\n".join(f"- {it}" for it in items if it).strip()
+        ln = _RE_LEADING_BULLET.sub("", ln).strip()
+        if ln:
+            cleaned_lines.append(ln)
+    return " ".join(" ".join(cleaned_lines).split()).strip()
 
 
 _RE_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -161,28 +142,20 @@ _RE_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 def _fallback_summary(content: str) -> str:
     """
-    Deterministic fallback summary (Markdown bullets) when the LLM path fails.
+    Deterministic fallback summary (single paragraph) when the LLM path fails.
     """
     t = " ".join((content or "").replace("\r\n", "\n").replace("\r", "\n").split()).strip()
     if not t:
-        return "- (no content cached)"
-    # Use first ~4k chars to build bullets.
+        return "(no content cached)"
     head = t[:4000]
     sentences = [s.strip() for s in _RE_SENT_SPLIT.split(head) if s.strip()]
-    bullets: list[str] = []
-    for s in sentences:
-        s = " ".join(s.split())
-        if len(s) > 200:
-            s = s[:199].rstrip() + "…"
-        if s:
-            bullets.append(s)
-        if len(bullets) >= 5:
-            break
-    if not bullets:
-        bullets = [head[:199].rstrip() + "…" if len(head) > 200 else head]
-    # Ensure 3–5 bullets if possible by splitting long bullet fragments.
-    bullets = bullets[:5]
-    return _format_bullets(bullets[: max(3, min(5, len(bullets)))])
+    if not sentences:
+        return _clean_paragraph(head)
+    # Take 3–6 sentences.
+    chosen = sentences[:6]
+    if len(chosen) < 3:
+        chosen = sentences[:3]
+    return _clean_paragraph(" ".join(chosen))
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,11 +213,10 @@ def map_reduce_summary(
         # Single-pass summary over full doc.
         messages = [
             ChatMessage(role="system", content=SUMMARY_SYSTEM),
-            ChatMessage(role="user", content=f"Summarize this content as Markdown bullets:\n\n---\n{chunks[0]}\n---\n\nBullets:"),
+            ChatMessage(role="user", content=f"Summarize this content as a single short paragraph:\n\n---\n{chunks[0]}\n---\n\nSummary:"),
         ]
-        raw = llm.generate(messages, llm.model, 500)
-        bullets = _parse_bullets(raw, max_bullets=7)
-        return _format_bullets(bullets)
+        raw = llm.generate(messages, llm.model, 400)
+        return _clean_paragraph(raw)
 
     if progress is not None:
         content_len = len(content or "")
@@ -261,11 +233,10 @@ def map_reduce_summary(
             every = max(1, int(progress_every_chunks))
             if i == 1 or i == len(chunks) or (i % every) == 0:
                 progress(f"summary map: chunk {i}/{len(chunks)}")
-        user = f"Chunk {i}/{len(chunks)}:\n\n---\n{chunk}\n---\n\nBullets:"
+        user = f"Chunk {i}/{len(chunks)}:\n\n---\n{chunk}\n---\n\nSummary paragraph:"
         messages = [ChatMessage(role="system", content=MAP_SYSTEM), ChatMessage(role="user", content=user)]
-        raw = llm.generate(messages, llm.model, 300)
-        bullets = _parse_bullets(raw, max_bullets=5)
-        mapped.append(_format_bullets(bullets))
+        raw = llm.generate(messages, llm.model, 250)
+        mapped.append(_clean_paragraph(raw))
 
     # Reduce: hierarchical batch reduction until one summary remains.
     batch = max(2, int(reduce_batch_size))
@@ -284,15 +255,14 @@ def map_reduce_summary(
                 ChatMessage(role="system", content=REDUCE_SYSTEM),
                 ChatMessage(
                     role="user",
-                    content=f"Combine these chunk summaries into a final Markdown bullet summary:\n\n---\n{combined}\n---\n\nBullets:",
+                    content=f"Combine these chunk summaries into one short paragraph summary:\n\n---\n{combined}\n---\n\nSummary:",
                 ),
             ]
-            raw = llm.generate(messages, llm.model, 500)
-            bullets = _parse_bullets(raw, max_bullets=7)
-            next_round.append(_format_bullets(bullets))
+            raw = llm.generate(messages, llm.model, 450)
+            next_round.append(_clean_paragraph(raw))
         current = next_round
 
-    return current[0].strip()
+    return _clean_paragraph(current[0])
 
 
 def generate_summary(

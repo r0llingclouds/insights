@@ -153,7 +153,7 @@ Backfill options:
 
 ### Summaries (per source version)
 
-Each extraction (`source_versions`) stores a bullet summary (`source_versions.summary`) to improve recall.
+Each extraction (`source_versions`) stores a short paragraph summary (`source_versions.summary`) to improve recall.
 
 Important: summaries are generated from the **entire document/transcript**.
 
@@ -197,6 +197,12 @@ Backfill missing summaries:
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" summary backfill
+```
+
+Regenerate all summaries (recommended if you previously stored bullet summaries and want paragraph summaries everywhere):
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" summary backfill --force
 ```
 
 Backfill options:
