@@ -419,11 +419,21 @@ def summary_backfill(
                 skipped += 1
                 continue
             try:
+                def _summary_progress(
+                    msg: str,
+                    *,
+                    _vid: str = version_id,
+                    _i: int = idx,
+                    _n: int = len(rows),
+                ) -> None:
+                    err_console.print(f"[{_i}/{_n}] {_vid} {msg}", markup=False, highlight=False)
+
                 summary = generate_summary(
                     content=plain,
                     provider=provider,
                     model=model,
                     max_content_chars=max_content_chars,
+                    progress=_summary_progress,
                 )
                 if not summary:
                     skipped += 1
@@ -471,6 +481,9 @@ def ingest(
     paths = ctx.obj["paths"]
     db = Database.open(paths.db_path)
     try:
+        def _summary_progress(msg: str) -> None:
+            err_console.print(msg, markup=False, highlight=False)
+
         result = ingest_source(
             db=db,
             input_value=input_value,
@@ -479,6 +492,7 @@ def ingest(
             url_backend=backend,
             refresh=refresh,
             title=title,
+            summary_progress=_summary_progress,
         )
         try:
             from insights.describe import ensure_source_description

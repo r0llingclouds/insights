@@ -78,3 +78,27 @@ def test_map_reduce_hierarchical_reduction_batches() -> None:
     assert len([c for c in rec.calls if c.startswith("reduce:")]) >= 2
 
 
+def test_map_reduce_emits_progress_messages() -> None:
+    text = "\n\n".join([f"PARA{i} " + ("z" * 200) for i in range(6)])
+    rec = _Recorder(calls=[])
+    llm = _LLM(provider="anthropic", model="stub", generate=rec.generate)
+
+    progress: list[str] = []
+
+    def on_progress(msg: str) -> None:
+        progress.append(msg)
+
+    out = map_reduce_summary(
+        content=text,
+        llm=llm,
+        chunk_chars=120,
+        overlap_chars=0,
+        reduce_batch_size=2,
+        progress=on_progress,
+        progress_every_chunks=2,
+    )
+    assert out
+    # Should include at least one map and one reduce progress message.
+    assert any("summary map:" in m for m in progress)
+    assert any("summary reduce:" in m for m in progress)
+

@@ -46,3 +46,21 @@ def pick_anthropic_model(
     return default_model
 
 
+def get_large_content_cutoff(*, cutoff_default: int = 10_000) -> int:
+    """
+    Return the effective cutoff (in characters) used to consider content \"large\".
+
+    Env override:
+    - INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS (positive int)
+    """
+    cutoff_env = _env_int("INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS")
+    return int(cutoff_env) if cutoff_env is not None else int(cutoff_default)
+
+
+def is_large_content(*, content_len: int, cutoff_default: int = 10_000) -> bool:
+    """
+    True if content_len is strictly greater than the effective cutoff.
+    """
+    return int(content_len) > int(get_large_content_cutoff(cutoff_default=cutoff_default))
+
+

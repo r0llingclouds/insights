@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
-from insights.llm.routing import pick_anthropic_model
+from insights.llm.routing import get_large_content_cutoff, is_large_content, pick_anthropic_model
 
 
 SUMMARY_SYSTEM = """\
@@ -199,6 +199,8 @@ def map_reduce_summary(
     chunk_chars: int,
     overlap_chars: int,
     reduce_batch_size: int,
+    progress: Callable[[str], None] | None = None,
+    progress_every_chunks: int = 5,
 ) -> str:
     chunks = chunk_text(content, chunk_chars=chunk_chars, overlap_chars=overlap_chars)
     if not chunks:
@@ -213,9 +215,21 @@ def map_reduce_summary(
         bullets = _parse_bullets(raw, max_bullets=7)
         return _format_bullets(bullets)
 
+    if progress is not None:
+        content_len = len(content or "")
+        progress(
+            "Large content detected: generating whole-doc summary via map-reduce "
+            f"(chars={content_len}, cutoff={get_large_content_cutoff()}, model={llm.model}, "
+            f"chunk_chars={chunk_chars}, overlap_chars={overlap_chars}, chunks={len(chunks)})"
+        )
+
     # Map: summarize each chunk.
     mapped: list[str] = []
     for i, chunk in enumerate(chunks, 1):
+        if progress is not None:
+            every = max(1, int(progress_every_chunks))
+            if i == 1 or i == len(chunks) or (i % every) == 0:
+                progress(f"summary map: chunk {i}/{len(chunks)}")
         user = f"Chunk {i}/{len(chunks)}:\n\n---\n{chunk}\n---\n\nBullets:"
         messages = [ChatMessage(role="system", content=MAP_SYSTEM), ChatMessage(role="user", content=user)]
         raw = llm.generate(messages, llm.model, 300)
@@ -225,7 +239,12 @@ def map_reduce_summary(
     # Reduce: hierarchical batch reduction until one summary remains.
     batch = max(2, int(reduce_batch_size))
     current = mapped
+    round_idx = 0
     while len(current) > 1:
+        round_idx += 1
+        if progress is not None:
+            groups = (len(current) + batch - 1) // batch
+            progress(f"summary reduce: round {round_idx} (inputs={len(current)}, batch_size={batch}, groups={groups})")
         next_round: list[str] = []
         for start in range(0, len(current), batch):
             group = current[start : start + batch]
@@ -251,6 +270,7 @@ def generate_summary(
     provider: str = "anthropic",
     model: str | None = None,
     max_content_chars: int = 12000,
+    progress: Callable[[str], None] | None = None,
 ) -> str:
     content_len = len(content or "")
     # Back-compat: previously this parameter controlled how much content we fed the model.
@@ -259,15 +279,21 @@ def generate_summary(
     chunk_chars = _env_int("INSIGHTS_SUMMARY_CHUNK_CHARS", int(max_content_chars))
     overlap_chars = _env_int("INSIGHTS_SUMMARY_OVERLAP_CHARS", 400)
     reduce_batch = _env_int("INSIGHTS_SUMMARY_REDUCE_BATCH_SIZE", 10)
+    progress_every = _env_int("INSIGHTS_SUMMARY_PROGRESS_EVERY_CHUNKS", 5)
 
     llm = _build_llm(provider=provider, model=model, content_len=content_len)
     # Always use whole-doc map-reduce; never truncate the source text.
+    # Only emit progress for \"large\" content (unless caller wants to force it by passing
+    # a progress callback and setting INSIGHTS_LARGE_CONTENT_CUTOFF_CHARS very low).
+    use_progress = progress if (progress is not None and is_large_content(content_len=content_len)) else None
     return map_reduce_summary(
         content=content,
         llm=llm,
         chunk_chars=chunk_chars,
         overlap_chars=overlap_chars,
         reduce_batch_size=reduce_batch,
+        progress=use_progress,
+        progress_every_chunks=progress_every,
     )
 
 

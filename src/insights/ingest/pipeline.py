@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Callable
 
 from insights.ingest.detect import DetectedSource, detect_source
 from insights.ingest.docling_extractor import extract_markdown_with_docling
@@ -56,6 +57,7 @@ def ingest(
     url_backend: IngestBackend = IngestBackend.DOCLING,
     refresh: bool = False,
     title: str | None = None,
+    summary_progress: Callable[[str], None] | None = None,
 ) -> IngestResult:
     detected = detect_source(input_value, forced_type=forced_type)
     if detected.kind == SourceKind.FILE:
@@ -64,6 +66,7 @@ def ingest(
             detected=detected,
             refresh=refresh,
             title=title or detected.display_title,
+            summary_progress=summary_progress,
         )
     if detected.kind == SourceKind.URL:
         if url_backend == IngestBackend.DOCLING:
@@ -72,6 +75,7 @@ def ingest(
                 detected=detected,
                 refresh=refresh,
                 title=title,
+                summary_progress=summary_progress,
             )
         if url_backend == IngestBackend.FIRECRAWL:
             return _ingest_url_firecrawl(
@@ -79,6 +83,7 @@ def ingest(
                 detected=detected,
                 refresh=refresh,
                 title=title,
+                summary_progress=summary_progress,
             )
         raise ValueError(f"Unsupported URL backend: {url_backend}")
     if detected.kind == SourceKind.YOUTUBE:
@@ -90,11 +95,19 @@ def ingest(
             refresh=refresh,
             title=title,
             cache_dir=cache_dir,
+            summary_progress=summary_progress,
         )
     raise ValueError(f"Unsupported source kind: {detected.kind.value}")
 
 
-def _ingest_file(*, db: Database, detected: DetectedSource, refresh: bool, title: str | None) -> IngestResult:
+def _ingest_file(
+    *,
+    db: Database,
+    detected: DetectedSource,
+    refresh: bool,
+    title: str | None,
+    summary_progress: Callable[[str], None] | None,
+) -> IngestResult:
     path = Path(detected.locator)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -147,7 +160,7 @@ def _ingest_file(*, db: Database, detected: DetectedSource, refresh: bool, title
             if not version.summary:
                 from insights.summarize import generate_summary
 
-                summary = generate_summary(content=plain)
+                summary = generate_summary(content=plain, progress=summary_progress)
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
@@ -173,6 +186,7 @@ def _ingest_url_docling(
     detected: DetectedSource,
     refresh: bool,
     title: str | None,
+    summary_progress: Callable[[str], None] | None,
 ) -> IngestResult:
     url = detected.locator
     source = db.upsert_source(kind=SourceKind.URL, locator=url, title=title)
@@ -210,7 +224,7 @@ def _ingest_url_docling(
             if not version.summary:
                 from insights.summarize import generate_summary
 
-                summary = generate_summary(content=plain)
+                summary = generate_summary(content=plain, progress=summary_progress)
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
@@ -236,6 +250,7 @@ def _ingest_url_firecrawl(
     detected: DetectedSource,
     refresh: bool,
     title: str | None,
+    summary_progress: Callable[[str], None] | None,
 ) -> IngestResult:
     url = detected.locator
     source = db.upsert_source(kind=SourceKind.URL, locator=url, title=title)
@@ -273,7 +288,7 @@ def _ingest_url_firecrawl(
             if not version.summary:
                 from insights.summarize import generate_summary
 
-                summary = generate_summary(content=plain)
+                summary = generate_summary(content=plain, progress=summary_progress)
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:
@@ -324,6 +339,7 @@ def _ingest_youtube_assemblyai(
     refresh: bool,
     title: str | None,
     cache_dir: Path,
+    summary_progress: Callable[[str], None] | None,
 ) -> IngestResult:
     video_id = detected.locator
     source = db.upsert_source(kind=SourceKind.YOUTUBE, locator=video_id, title=title)
@@ -370,7 +386,7 @@ def _ingest_youtube_assemblyai(
             if not version.summary:
                 from insights.summarize import generate_summary
 
-                summary = generate_summary(content=plain)
+                summary = generate_summary(content=plain, progress=summary_progress)
                 if summary:
                     db.set_source_version_summary(source_version_id=version.id, summary=summary)
         except Exception:

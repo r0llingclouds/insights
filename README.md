@@ -170,6 +170,14 @@ Optional tuning (whole-doc map-reduce):
 - `INSIGHTS_SUMMARY_CHUNK_CHARS` (default: `12000` unless overridden by `--max-content-chars`)
 - `INSIGHTS_SUMMARY_OVERLAP_CHARS` (default: `400`)
 - `INSIGHTS_SUMMARY_REDUCE_BATCH_SIZE` (default: `10`)
+- `INSIGHTS_SUMMARY_PROGRESS_EVERY_CHUNKS` (default: `5`) — print progress every N chunks when processing large content
+
+Progress / warnings for large docs:
+- When summarizing **large** content, Insights prints a warning and map/reduce progress **to stderr** (so stdout stays JSON-safe).
+- If you redirect stdout (e.g. `> out.json`), you’ll still see progress in the terminal.
+- To capture or silence progress:
+  - capture: `2> progress.log`
+  - silence: `2>/dev/null`
 
 Backfill missing summaries:
 
