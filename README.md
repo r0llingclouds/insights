@@ -238,4 +238,5 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" "check if I have this source https
 
 ### Search sources by topic and type (YouTube/PDF)
 uv run insights --app-dir "$INSIGHTS_APP_DIR" "check if I have a youtube video about a user that cant stand using IDEs anymore"
+
 uv run insights --app-dir "$INSIGHTS_APP_DIR" "check if I have a pdf doc about a project of agentic AI with ViveBioTech"
