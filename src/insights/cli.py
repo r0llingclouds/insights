@@ -64,6 +64,9 @@ app.add_typer(title_app, name="title")
 summary_app = typer.Typer(add_completion=False, help="Generate/backfill source version summaries.")
 app.add_typer(summary_app, name="summary")
 
+tokens_app = typer.Typer(add_completion=False, help="Token utilities (backfill exact token counts).")
+app.add_typer(tokens_app, name="tokens")
+
 
 @app.callback()
 def _global_options(
@@ -455,6 +458,110 @@ def summary_backfill(
         db.close()
 
 
+@tokens_app.command("backfill")
+def tokens_backfill(
+    ctx: typer.Context,
+    limit: Annotated[
+        int,
+        typer.Option(
+            "--limit",
+            help="Max documents to process (default 0 = no limit).",
+        ),
+    ] = 0,
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            "--batch-size",
+            help="Batch size for DB updates (default 100).",
+        ),
+    ] = 100,
+) -> None:
+    """
+    Backfill exact token counts for cached documents.
+
+    Notes:
+    - Tokens are stored in `documents.token_count`.
+    - The count is computed by `insights.utils.tokens.estimate_tokens()` which now uses tiktoken.
+    """
+    from insights.utils.tokens import estimate_tokens
+
+    paths = ctx.obj["paths"]
+
+    import sqlite3
+
+    # Ensure DB migrations (including token_count rename) are applied.
+    db = Database.open(paths.db_path)
+    db.close()
+
+    lim = max(0, int(limit))
+    bs = max(1, min(int(batch_size), 5000))
+
+    conn = sqlite3.connect(str(paths.db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    try:
+        # Determine total for progress printing (best-effort; fast COUNT).
+        total_sql = "SELECT COUNT(1) AS c FROM documents"
+        params: tuple[int, ...] = ()
+        if lim > 0:
+            total = min(lim, int(conn.execute(total_sql + ";").fetchone()["c"]))
+        else:
+            total = int(conn.execute(total_sql + ";").fetchone()["c"])
+
+        if total <= 0:
+            console.print("No documents to process.", markup=False, highlight=False)
+            return
+
+        # Stream rows to avoid holding all documents in memory.
+        sql = "SELECT id, plain_text FROM documents ORDER BY id"
+        if lim > 0:
+            sql += " LIMIT ?"
+            params = (lim,)
+        sql += ";"
+
+        processed = 0
+        errors = 0
+        pending: list[tuple[int, str]] = []
+
+        # Wrap updates in explicit transactions for speed.
+        conn.execute("BEGIN;")
+        try:
+            for row in conn.execute(sql, params):
+                doc_id = str(row["id"])
+                plain = str(row["plain_text"] or "")
+                try:
+                    tok = int(estimate_tokens(plain))
+                except Exception as e:
+                    errors += 1
+                    err_console.print(f"(error) {doc_id}: {type(e).__name__}: {e}", markup=False, highlight=False)
+                    continue
+
+                pending.append((tok, doc_id))
+                processed += 1
+                if processed == 1 or processed == total or (processed % max(1, bs)) == 0:
+                    err_console.print(f"[{processed}/{total}] tokens backfill", markup=False, highlight=False)
+
+                if len(pending) >= bs:
+                    conn.executemany("UPDATE documents SET token_count = ? WHERE id = ?;", pending)
+                    pending.clear()
+
+            if pending:
+                conn.executemany("UPDATE documents SET token_count = ? WHERE id = ?;", pending)
+                pending.clear()
+            conn.execute("COMMIT;")
+        except Exception:
+            conn.execute("ROLLBACK;")
+            raise
+
+        err_console.print(
+            f"Done. processed={processed} errors={errors}",
+            markup=False,
+            highlight=False,
+        )
+    finally:
+        conn.close()
+
+
 @app.command()
 def version() -> None:
     """Print version info."""
@@ -572,13 +679,14 @@ def list_sources(
     db = Database.open(paths.db_path)
     try:
         sources = db.list_sources(limit=limit)
-        summary_by_source_id: dict[str, str | None] = {}
-        if show_summary:
-            docs = db.get_documents_for_sources_latest(
+        extractor_preference = ["firecrawl", "docling", "assemblyai"]
+        stats_by_source_id: dict[str, dict] = {}
+        if sources and (as_json or show_summary):
+            stats = db.get_document_stats_for_sources_latest(
                 source_ids=[s.id for s in sources],
-                extractor_preference=["firecrawl", "docling", "assemblyai"],
+                extractor_preference=extractor_preference,
             )
-            summary_by_source_id = {str(d["source_id"]): d.get("summary") for d in docs}
+            stats_by_source_id = {str(d["source_id"]): dict(d) for d in stats}
     finally:
         db.close()
 
@@ -594,7 +702,10 @@ def list_sources(
                     "title": s.title,
                     "locator": s.locator,
                     "description": s.description,
-                    **({"summary": summary_by_source_id.get(s.id)} if show_summary else {}),
+                    # Latest cached document stats (preferred extractor). Null if no cached doc.
+                    "token_count": (stats_by_source_id.get(s.id) or {}).get("token_count"),
+                    "char_count": (stats_by_source_id.get(s.id) or {}).get("char_count"),
+                    **({"summary": (stats_by_source_id.get(s.id) or {}).get("summary")} if show_summary else {}),
                     "created_at": s.created_at.isoformat(),
                     "updated_at": s.updated_at.isoformat(),
                 }
@@ -630,7 +741,7 @@ def list_sources(
             s.title or "",
             s.locator,
             _excerpt(s.description) if show_description else None,
-            _excerpt(summary_by_source_id.get(s.id), n=160) if show_summary else None,
+            _excerpt((stats_by_source_id.get(s.id) or {}).get("summary"), n=160) if show_summary else None,
             s.updated_at.isoformat(),
         )
     console.print(table)

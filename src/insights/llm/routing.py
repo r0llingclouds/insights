@@ -21,7 +21,7 @@ def pick_anthropic_model(
     env_model: str | None,
     default_model: str,
     content_len: int,
-    cutoff: int = 30_000,
+    cutoff: int = 400_000,
     large_model: str = "claude-haiku-4-5-20251001",
 ) -> str:
     """
@@ -46,7 +46,7 @@ def pick_anthropic_model(
     return default_model
 
 
-def get_large_content_cutoff(*, cutoff_default: int = 30_000) -> int:
+def get_large_content_cutoff(*, cutoff_default: int = 400_000) -> int:
     """
     Return the effective cutoff (in characters) used to consider content \"large\".
 
@@ -57,7 +57,7 @@ def get_large_content_cutoff(*, cutoff_default: int = 30_000) -> int:
     return int(cutoff_env) if cutoff_env is not None else int(cutoff_default)
 
 
-def is_large_content(*, content_len: int, cutoff_default: int = 30_000) -> bool:
+def is_large_content(*, content_len: int, cutoff_default: int = 400_000) -> bool:
     """
     True if content_len is strictly greater than the effective cutoff.
     """

@@ -310,7 +310,7 @@ class Database:
         source_version_id: str,
         markdown: str,
         plain_text: str,
-        token_estimate: int,
+        token_count: int,
     ) -> str:
         doc_id = _new_id()
         char_count = len(plain_text)
@@ -325,18 +325,18 @@ class Database:
                 self._conn.execute(
                     """
                     UPDATE documents
-                    SET markdown = ?, plain_text = ?, char_count = ?, token_estimate = ?
+                    SET markdown = ?, plain_text = ?, char_count = ?, token_count = ?
                     WHERE id = ?;
                     """,
-                    (markdown, plain_text, char_count, token_estimate, doc_id),
+                    (markdown, plain_text, char_count, token_count, doc_id),
                 )
             else:
                 self._conn.execute(
                     """
-                    INSERT INTO documents(id, source_version_id, markdown, plain_text, char_count, token_estimate)
+                    INSERT INTO documents(id, source_version_id, markdown, plain_text, char_count, token_count)
                     VALUES (?, ?, ?, ?, ?, ?);
                     """,
-                    (doc_id, source_version_id, markdown, plain_text, char_count, token_estimate),
+                    (doc_id, source_version_id, markdown, plain_text, char_count, token_count),
                 )
         return doc_id
 
@@ -427,7 +427,7 @@ class Database:
         extractor_preference: Sequence[str],
     ) -> list[dict[str, Any]]:
         """
-        Returns documents (id, plain_text, token_estimate, source_version_id, source_id, extractor) for each source.
+        Returns documents (id, plain_text, token_count, source_version_id, source_id, extractor) for each source.
         If multiple extractors exist, first matching extractor_preference wins per source.
         """
         if not source_ids:
@@ -442,7 +442,7 @@ class Database:
                    sv.summary,
                    d.id AS document_id,
                    d.plain_text,
-                   d.token_estimate
+                   d.token_count
             FROM source_versions sv
             JOIN documents d ON d.source_version_id = sv.id
             WHERE sv.source_id IN ({placeholders})
@@ -463,7 +463,7 @@ class Database:
                 "extractor": extractor,
                 "document_id": str(r["document_id"]),
                 "plain_text": str(r["plain_text"]),
-                "token_estimate": int(r["token_estimate"]),
+                "token_count": int(r["token_count"]),
                 "extracted_at": str(r["extracted_at"]),
                 "summary": str(r["summary"]) if r["summary"] is not None else None,
             }
@@ -487,6 +487,78 @@ class Database:
                 out.append(v)
         return out
 
+    def get_document_stats_for_sources_latest(
+        self,
+        *,
+        source_ids: Sequence[str],
+        extractor_preference: Sequence[str],
+    ) -> list[dict[str, Any]]:
+        """
+        Returns latest cached document stats for each source without loading large text fields.
+
+        Fields:
+        - source_id, source_version_id, extractor, extracted_at
+        - document_id, char_count, token_count
+        - summary (from source_versions)
+
+        If multiple extractors exist, first matching extractor_preference wins per source.
+        """
+        if not source_ids:
+            return []
+        placeholders = ",".join("?" for _ in source_ids)
+        rows = self._conn.execute(
+            f"""
+            SELECT sv.source_id,
+                   sv.id AS source_version_id,
+                   sv.extractor,
+                   sv.extracted_at,
+                   sv.summary,
+                   d.id AS document_id,
+                   d.char_count,
+                   d.token_count
+            FROM source_versions sv
+            JOIN documents d ON d.source_version_id = sv.id
+            WHERE sv.source_id IN ({placeholders})
+              AND sv.status = 'ok'
+            ORDER BY sv.extracted_at DESC;
+            """,
+            list(source_ids),
+        ).fetchall()
+
+        pref_rank = {name: i for i, name in enumerate(extractor_preference)}
+        best: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            source_id = str(r["source_id"])
+            extractor = str(r["extractor"])
+            candidate = {
+                "source_id": source_id,
+                "source_version_id": str(r["source_version_id"]),
+                "extractor": extractor,
+                "document_id": str(r["document_id"]),
+                "char_count": int(r["char_count"]),
+                "token_count": int(r["token_count"]),
+                "extracted_at": str(r["extracted_at"]),
+                "summary": str(r["summary"]) if r["summary"] is not None else None,
+            }
+            cand_rank = pref_rank.get(extractor, 999)
+            prev = best.get(source_id)
+            if prev is None:
+                candidate["_pref_rank"] = cand_rank
+                best[source_id] = candidate
+                continue
+            prev_rank = int(prev.get("_pref_rank", 999))
+            if cand_rank < prev_rank:
+                candidate["_pref_rank"] = cand_rank
+                best[source_id] = candidate
+
+        out: list[dict[str, Any]] = []
+        for source_id in source_ids:
+            v = best.get(source_id)
+            if v:
+                v.pop("_pref_rank", None)
+                out.append(v)
+        return out
+
     def get_latest_document_for_source(
         self,
         *,
@@ -496,7 +568,7 @@ class Database:
         """
         Returns a dict containing:
         - document_id, source_version_id, extractor, extracted_at
-        - plain_text, markdown, token_estimate, char_count
+        - plain_text, markdown, token_count, char_count
 
         If multiple extractors exist, the first matching extractor_preference wins.
         """
@@ -510,7 +582,7 @@ class Database:
                    d.markdown,
                    d.plain_text,
                    d.char_count,
-                   d.token_estimate
+                   d.token_count
             FROM source_versions sv
             JOIN documents d ON d.source_version_id = sv.id
             WHERE sv.source_id = ?

@@ -138,7 +138,7 @@ def build_context(
     """
     Build an LLM-ready context for a set of sources.
 
-    - If combined doc token estimates fit under max_context_tokens → include full text.
+    - If combined doc token counts fit under max_context_tokens → include full text.
     - Else → retrieve top-k chunks via SQLite FTS5.
     """
     extractor_preference = extractor_preference or ["docling", "firecrawl", "assemblyai"]
@@ -158,7 +158,7 @@ def build_context(
         d = doc_by_source.get(sid)
         if not d:
             raise RuntimeError(f"No extracted document found for source {sid}. Run `insights ingest` first.")
-        total_tokens += int(d["token_estimate"])
+        total_tokens += int(d["token_count"])
 
     if total_tokens <= max_context_tokens:
         parts: list[str] = []

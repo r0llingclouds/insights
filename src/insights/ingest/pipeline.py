@@ -179,7 +179,7 @@ def _ingest_file(
             source_version_id=version.id,
             markdown=markdown,
             plain_text=plain,
-            token_estimate=token_est,
+            token_count=token_est,
         )
         # Best-effort per-version summary for faster recall/semantic matching.
         try:
@@ -260,7 +260,7 @@ def _ingest_url_docling(
             source_version_id=version.id,
             markdown=markdown,
             plain_text=plain,
-            token_estimate=token_est,
+            token_count=token_est,
         )
         try:
             if not version.summary:
@@ -340,7 +340,7 @@ def _ingest_url_firecrawl(
             source_version_id=version.id,
             markdown=markdown,
             plain_text=plain,
-            token_estimate=token_est,
+            token_count=token_est,
         )
         try:
             if not version.summary:
@@ -456,7 +456,7 @@ def _ingest_youtube_assemblyai(
             source_version_id=version.id,
             markdown=markdown,
             plain_text=plain,
-            token_estimate=token_est,
+            token_count=token_est,
         )
         try:
             if not version.summary:

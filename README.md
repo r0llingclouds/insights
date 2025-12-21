@@ -172,6 +172,20 @@ Optional tuning (whole-doc map-reduce):
 - `INSIGHTS_SUMMARY_REDUCE_BATCH_SIZE` (default: `10`)
 - `INSIGHTS_SUMMARY_PROGRESS_EVERY_CHUNKS` (default: `5`) — print progress every N chunks when processing large content
 
+### Token counting (exact)
+
+Insights stores a token count for each cached document in the DB (`documents.token_count`).
+
+- The value is an **exact token count** computed with `tiktoken` (not a heuristic), using encoding:
+  - `INSIGHTS_TOKEN_ENCODING` if set
+  - otherwise `o200k_base` (fallback: `cl100k_base`)
+
+Backfill token counts (recommended after upgrading from older versions):
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" tokens backfill
+```
+
 Progress / warnings for large docs:
 - When summarizing **large** content, Insights prints a warning and map/reduce progress **to stderr** (so stdout stays JSON-safe).
 - If you redirect stdout (e.g. `> out.json`), you’ll still see progress in the terminal.
@@ -194,7 +208,7 @@ Backfill options:
 
 ### Large document optimization (auto-switch to Haiku)
 
-When generating **summaries**, **descriptions**, or **titles**, if the source content exceeds **10,000 characters**, Insights automatically uses **`claude-haiku-4-5-20251001`** (cheaper) for that generation.
+When generating **summaries**, **descriptions**, or **titles**, if the source content exceeds **400,000 characters**, Insights automatically uses **`claude-haiku-4-5-20251001`** (cheaper) for that generation.
 
 Overrides:
 - If you set one of the model env vars (`INSIGHTS_SUMMARY_MODEL`, `INSIGHTS_DESCRIBE_MODEL`, `INSIGHTS_TITLE_MODEL`), that model is always used (no auto-switch).

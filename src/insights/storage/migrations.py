@@ -140,6 +140,14 @@ MIGRATIONS: list[Migration] = [
             "CREATE INDEX IF NOT EXISTS idx_source_versions_extracted_at_summary ON source_versions(extracted_at);",
         ),
     ),
+    Migration(
+        version=4,
+        name="rename_documents_token_estimate_to_token_count",
+        statements=(
+            # `token_estimate` is now computed exactly (tiktoken); rename for clarity.
+            "ALTER TABLE documents RENAME COLUMN token_estimate TO token_count;",
+        ),
+    ),
 ]
 
 
