@@ -63,6 +63,18 @@ def _resolve_or_ingest_source(
             markup=False,
             highlight=False,
         )
+    try:
+        from insights.describe import ensure_source_description
+
+        ensure_source_description(
+            db=db,
+            source_id=result.source.id,
+            source_version_id=result.source_version.id,
+            force=bool(refresh),
+        )
+    except Exception:
+        # Description generation is best-effort; never fail chat due to it.
+        pass
     return result.source
 
 

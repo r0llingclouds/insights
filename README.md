@@ -41,6 +41,48 @@ export FIRECRAWL_API_KEY="..."
 
 Optional: you can also store them in a `.env` file in your **current directory** or inside your **app dir** (e.g. `/tmp/insights-test/.env`).
 
+### Natural-language agent (Anthropic tool-use)
+
+You can run complex requests as a single quoted query:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" "show conversations for https://www.youtube.com/watch?v=zPMPqzjM0Fw"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" "resume last conversation on https://www.youtube.com/watch?v=zPMPqzjM0Fw"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" "check if I have a youtube video about someone who stopped using IDEs"
+```
+
+Equivalent explicit form:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" do "resume last conversation on https://www.youtube.com/watch?v=zPMPqzjM0Fw"
+```
+
+Notes:
+- The agent requires `ANTHROPIC_API_KEY` (it orchestrates via Anthropic tool-use, even if Q&A uses another provider).
+- By default the agent runs in **safe mode** (no ingestion / network writes). If ingestion is needed, it prints the exact command to run.
+- To allow the agent to ingest automatically, add `--yes`:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "ingest https://www.youtube.com/watch?v=zPMPqzjM0Fw"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "ask https://www.youtube.com/watch?v=zPMPqzjM0Fw what is this about?"
+```
+
+Agent tuning:
+- `--agent-model claude-sonnet-4-20250514`
+- `--agent-max-steps 10`
+- `--agent-verbose`
+
+### Source descriptions (for semantic matching)
+
+Insights stores an LLM-generated one-liner description for each source (`sources.description`) to support lightweight “semantic search” without vectors.
+
+- Descriptions are generated on ingest (best-effort; ingestion never fails if description generation fails).
+- To backfill missing descriptions for existing sources:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" describe backfill
+```
+
 ### Commands
 
 #### Ingest sources

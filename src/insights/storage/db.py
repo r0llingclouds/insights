@@ -157,6 +157,48 @@ class Database:
         ).fetchall()
         return [_row_to_source(r) for r in rows]
 
+    def set_source_description(self, *, source_id: str, description: str) -> None:
+        with self.transaction():
+            self._conn.execute(
+                "UPDATE sources SET description = ?, updated_at = ? WHERE id = ?;",
+                (description, _dt_to_iso(_utcnow()), source_id),
+            )
+
+    def list_sources_missing_description(
+        self,
+        *,
+        limit: int = 100,
+        kind: SourceKind | None = None,
+    ) -> list[Source]:
+        """
+        List sources that have no description yet (NULL or empty).
+        """
+        lim = max(1, min(int(limit), 1000))
+        params: list[Any] = []
+        where = ["(description IS NULL OR trim(description) = '')"]
+        if kind is not None:
+            where.append("kind = ?")
+            params.append(kind.value)
+        rows = self._conn.execute(
+            f"SELECT * FROM sources WHERE {' AND '.join(where)} ORDER BY updated_at DESC LIMIT ?;",
+            [*params, lim],
+        ).fetchall()
+        return [_row_to_source(r) for r in rows]
+
+    def get_latest_plain_text_for_source(
+        self,
+        *,
+        source_id: str,
+        extractor_preference: Sequence[str],
+    ) -> str | None:
+        docs = self.get_documents_for_sources_latest(
+            source_ids=[source_id],
+            extractor_preference=extractor_preference,
+        )
+        if not docs:
+            return None
+        return str(docs[0].get("plain_text") or "") or None
+
     def create_source_version(
         self,
         *,
@@ -589,6 +631,7 @@ def _row_to_source(row: sqlite3.Row) -> Source:
         kind=SourceKind(str(row["kind"])),
         locator=str(row["locator"]),
         title=str(row["title"]) if row["title"] is not None else None,
+        description=str(row["description"]) if row["description"] is not None else None,
         created_at=_iso_to_dt(str(row["created_at"])),
         updated_at=_iso_to_dt(str(row["updated_at"])),
     )

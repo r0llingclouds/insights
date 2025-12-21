@@ -6,6 +6,8 @@ import re
 from typing import Annotated
 
 import typer
+from typer.core import TyperGroup
+import click
 from rich.console import Console
 from rich.table import Table
 
@@ -18,13 +20,42 @@ from insights.retrieval import ContextMode, build_context
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
 
+
+class _InsightsDefaultGroup(TyperGroup):
+    """
+    Allow `insights \"<natural language query>\"` by routing unknown commands to `insights do`.
+
+    Click normally interprets the first non-option token as a subcommand name; when the query is quoted,
+    that token contains spaces and won't match any subcommand. We treat that as the natural-language query.
+    """
+
+    def resolve_command(self, ctx: click.Context, args: list[str]):  # type: ignore[override]
+        """
+        If the first non-option token doesn't match a subcommand, route to `do`
+        and treat the original token(s) as `do`'s arguments.
+        """
+        if args:
+            first = args[0]
+            if super().get_command(ctx, first) is None:
+                do_cmd = super().get_command(ctx, "do")
+                if do_cmd is not None:
+                    # Return args unchanged so `do` receives the original token(s) as its QUERY.
+                    return "do", do_cmd, args
+        return super().resolve_command(ctx, args)
+
+
 app = typer.Typer(
     add_completion=False,
     help="Ingest sources into cached text, then chat/Q&A over them.",
+    cls=_InsightsDefaultGroup,
 )
 
 console = Console(highlight=False)
 err_console = Console(stderr=True, highlight=False)
+logger = logging.getLogger(__name__)
+
+describe_app = typer.Typer(add_completion=False, help="Generate/backfill source descriptions for semantic matching.")
+app.add_typer(describe_app, name="describe")
 
 
 @app.callback()
@@ -43,13 +74,154 @@ def _global_options(
         typer.Option("--app-dir", help="App directory (default: ~/.insights)."),
     ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", help="Enable debug logging.")] = False,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            help="Allow side effects for natural-language agent queries (e.g. ingest). Without this, the agent proposes commands instead.",
+        ),
+    ] = False,
+    agent_model: Annotated[
+        str,
+        typer.Option(
+            "--agent-model",
+            help="Anthropic model for the natural-language agent (default: claude-sonnet-4-20250514).",
+        ),
+    ] = "claude-sonnet-4-20250514",
+    agent_max_steps: Annotated[
+        int,
+        typer.Option("--agent-max-steps", help="Max tool-use steps for the agent (default 10)."),
+    ] = 10,
+    agent_verbose: Annotated[
+        bool,
+        typer.Option("--agent-verbose", help="Print agent tool calls and step debug output."),
+    ] = False,
 ) -> None:
     paths = resolve_paths(db=db, app_dir=app_dir)
-    ctx.obj = {"paths": paths}
+    ctx.obj = {
+        "paths": paths,
+        "agent": {
+            "allow_side_effects": bool(yes),
+            "model": agent_model,
+            "max_steps": int(agent_max_steps),
+            "verbose": bool(agent_verbose),
+        },
+    }
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+
+
+@app.command()
+def do(ctx: typer.Context, query: Annotated[str, typer.Argument(help="Natural-language query.")]) -> None:
+    """
+    Run a natural-language query through the agent (tool-use).
+
+    You can also run the agent implicitly by passing a quoted query to the root command:
+      insights \"show conversations for https://...\"\n
+    """
+    paths = ctx.obj["paths"]
+    cfg = ctx.obj.get("agent") or {}
+
+    from insights.agent.loop import run_agent
+
+    text = (query or "").strip()
+    if not text:
+        raise typer.BadParameter("query cannot be empty")
+
+    out = run_agent(
+        query=text,
+        paths=paths,
+        model=str(cfg.get("model") or "claude-sonnet-4-20250514"),
+        max_steps=int(cfg.get("max_steps") or 10),
+        verbose=bool(cfg.get("verbose") or False),
+        allow_side_effects=bool(cfg.get("allow_side_effects") or False),
+    )
+    console.print(out, markup=False, highlight=False, soft_wrap=True)
+
+
+@describe_app.command("backfill")
+def describe_backfill(
+    ctx: typer.Context,
+    limit: Annotated[int, typer.Option("--limit", help="Max sources to process (default 100).")] = 100,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Regenerate descriptions even if already present."),
+    ] = False,
+    provider: Annotated[str, typer.Option("--provider", help="openai|anthropic")] = "anthropic",
+    model: Annotated[str | None, typer.Option("--model", help="Model override.")] = None,
+    max_content_chars: Annotated[
+        int,
+        typer.Option("--max-content-chars", help="Max characters from source text to send to the LLM."),
+    ] = 8000,
+) -> None:
+    """
+    Backfill missing (or all, with --force) source descriptions.
+
+    Descriptions are stored on `sources.description` and used for lightweight semantic matching.
+    """
+    from insights.describe import generate_description
+
+    paths = ctx.obj["paths"]
+    db = Database.open(paths.db_path)
+    try:
+        lim = max(1, min(int(limit), 5000))
+        if force:
+            sources = db.list_sources(limit=lim)
+        else:
+            sources = db.list_sources_missing_description(limit=lim)
+
+        if not sources:
+            console.print("No sources to process.", markup=False, highlight=False)
+            return
+
+        extractor_preference = ["firecrawl", "docling", "assemblyai"]
+        processed = 0
+        skipped = 0
+        errors = 0
+
+        for idx, s in enumerate(sources, 1):
+            display_locator = s.locator
+            if s.kind == SourceKind.YOUTUBE:
+                display_locator = f"https://www.youtube.com/watch?v={s.locator}"
+            display = s.title or display_locator
+            err_console.print(f"[{idx}/{len(sources)}] {display}", markup=False, highlight=False)
+
+            plain = db.get_latest_plain_text_for_source(
+                source_id=s.id,
+                extractor_preference=extractor_preference,
+            )
+            if not plain:
+                skipped += 1
+                err_console.print("  (skip) no cached content found", markup=False, highlight=False)
+                continue
+
+            try:
+                desc = generate_description(
+                    content=plain,
+                    provider=provider,
+                    model=model,
+                    max_content_chars=max_content_chars,
+                )
+                if not desc:
+                    skipped += 1
+                    err_console.print("  (skip) empty description", markup=False, highlight=False)
+                    continue
+                db.set_source_description(source_id=s.id, description=desc)
+                processed += 1
+                console.print(f"- {s.id} → {desc}", markup=False, highlight=False)
+            except Exception as e:
+                errors += 1
+                err_console.print(f"  (error) {type(e).__name__}: {e}", markup=False, highlight=False)
+
+        err_console.print(
+            f"Done. processed={processed} skipped={skipped} errors={errors}",
+            markup=False,
+            highlight=False,
+        )
+    finally:
+        db.close()
 
 
 @app.command()
@@ -88,6 +260,18 @@ def ingest(
             refresh=refresh,
             title=title,
         )
+        try:
+            from insights.describe import ensure_source_description
+
+            ensure_source_description(
+                db=db,
+                source_id=result.source.id,
+                source_version_id=result.source_version.id,
+                force=bool(refresh),
+            )
+        except Exception as e:
+            # Never fail ingest due to description generation.
+            logger.debug("Description generation failed for source_id=%s: %s", result.source.id, e)
     finally:
         db.close()
 
@@ -403,6 +587,18 @@ def ask(
                     markup=False,
                     highlight=False,
                 )
+            try:
+                from insights.describe import ensure_source_description
+
+                ensure_source_description(
+                    db=db,
+                    source_id=ingested.source.id,
+                    source_version_id=ingested.source_version.id,
+                    force=bool(refresh_sources),
+                )
+            except Exception as e:
+                # Never fail ask due to description generation.
+                logger.debug("Description generation failed for source_id=%s: %s", ingested.source.id, e)
             source_ids.append(ingested.source.id)
 
         context = build_context(

@@ -122,6 +122,16 @@ MIGRATIONS: list[Migration] = [
             """,
         ),
     )
+    ,
+    Migration(
+        version=2,
+        name="add_source_description",
+        statements=(
+            # Lightweight semantic search support (LLM-generated one-liner per source).
+            "ALTER TABLE sources ADD COLUMN description TEXT;",
+            "CREATE INDEX IF NOT EXISTS idx_sources_kind_updated_at ON sources(kind, updated_at);",
+        ),
+    ),
 ]
 
 

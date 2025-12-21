@@ -1,10 +1,14 @@
 # Examples
+
+> These examples use the **natural-language agent** (quoted query). By default it runs in **safe mode** (no ingestion).
+> Add `--yes` to allow the agent to ingest automatically when needed.
+
 ## EASY
 ### Ask about a YouTube video
-uv run insights --app-dir "$INSIGHTS_APP_DIR" "ask https://www.youtube.com/watch?v=zPMPqzjM0Fw what is this about?"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "ask https://www.youtube.com/watch?v=zPMPqzjM0Fw what is this about?"
 
 ### Ingest a URL
-uv run insights --app-dir "$INSIGHTS_APP_DIR" "ingest https://www.youtube.com/watch?v=zPMPqzjM0Fw"
+uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "ingest https://www.youtube.com/watch?v=zPMPqzjM0Fw"
 
 ### Start chat on a source
 uv run insights --app-dir "$INSIGHTS_APP_DIR" "chat https://www.youtube.com/watch?v=zPMPqzjM0Fw"

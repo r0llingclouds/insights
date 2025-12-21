@@ -24,6 +24,7 @@ class Source:
     kind: SourceKind
     locator: str
     title: str | None
+    description: str | None
     created_at: datetime
     updated_at: datetime
 
