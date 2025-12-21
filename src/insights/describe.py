@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.storage.db import Database
 
@@ -39,7 +41,8 @@ def generate_description(
         used_model = model or "gpt-4o-mini"
     elif p == "anthropic":
         client = AnthropicClient()
-        used_model = model or "claude-3-5-haiku-latest"
+        # Default to a model we already know works in this app (agent default), but allow override.
+        used_model = model or os.getenv("INSIGHTS_DESCRIBE_MODEL") or "claude-sonnet-4-20250514"
     else:
         raise ValueError("provider must be 'openai' or 'anthropic'")
 

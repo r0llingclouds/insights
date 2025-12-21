@@ -111,6 +111,10 @@ def _global_options(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    # httpx is very chatty at INFO ("HTTP Request: ..."). Only show it when user enabled --verbose.
+    if not verbose:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 @app.command()
