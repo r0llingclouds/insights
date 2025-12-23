@@ -41,6 +41,32 @@ export FIRECRAWL_API_KEY="..."
 
 Optional: you can also store them in a `.env` file in your **current directory** or inside your **app dir** (e.g. `/tmp/insights-test/.env`).
 
+### Configuration file (TOML)
+
+You can set persistent defaults in a TOML config file. Insights looks for config in this order (later overrides earlier):
+
+1. `~/.config/insights/config.toml`
+2. `<app_dir>/config.toml`
+3. `./insights.toml` (current directory)
+
+Example `config.toml`:
+
+```toml
+[defaults]
+provider = "anthropic"
+model = "claude-3-5-sonnet-latest"
+max_context_tokens = 12000
+max_output_tokens = 800
+temperature = 0.2
+stream = true  # Enable streaming by default
+
+[agent]
+model = "claude-sonnet-4-20250514"
+max_steps = 10
+```
+
+CLI flags always override config file settings.
+
 ### Global options (apply to all commands)
 
 - `--app-dir PATH`: app directory (DB + cache). Default: `~/Documents/insights/`
@@ -385,6 +411,19 @@ Chat options:
 - `--max-context-tokens N`
 - `--max-output-tokens N`
 - `--temperature FLOAT`
+- `--no-stream` (disable streaming, wait for full response)
+
+#### Streaming responses
+
+By default, chat responses are **streamed** — you see tokens as they're generated. This provides a better interactive experience.
+
+To disable streaming and wait for the full response:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" chat -s file.pdf --no-stream
+```
+
+You can also set `stream = false` in your config file to disable streaming by default.
 
 Context trimming (applies to `ask`/`chat`, not summarization):
 - `INSIGHTS_MAX_CONTEXT_CHARS` (default: `400000`) — per-source max chars used to build LLM context (head-trim)
@@ -426,9 +465,11 @@ Conversations options:
 - `--flat`
 - `--json`
 
-#### Export plain text / transcript (and markdown) to files
+#### Export source content to files
 
-Export the cached **markdown** to a `.md` file under `~/Downloads` by default (falls back to plain text/transcript if markdown is not available):
+Export the cached content to files under `~/Downloads` by default. Multiple formats are supported.
+
+**Default (markdown):**
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" text 830eb7dfaaac428a87fb2dae2e80a2a5
@@ -442,14 +483,99 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" text "https://example.com/article"
 uv run insights --app-dir "$INSIGHTS_APP_DIR" text "onepager.pdf"
 ```
 
+**Export formats (`--format` / `-f`):**
+
+- `md` — Markdown (default)
+- `txt` — Plain text
+- `json` — JSON with full metadata (source info, timestamps, token counts)
+- `html` — Styled HTML page
+
+```bash
+# Export as JSON with metadata
+uv run insights --app-dir "$INSIGHTS_APP_DIR" text source_id --format json
+
+# Export as styled HTML
+uv run insights --app-dir "$INSIGHTS_APP_DIR" text source_id --format html
+
+# Export as plain text
+uv run insights --app-dir "$INSIGHTS_APP_DIR" text source_id --format txt
+```
+
 Options:
+- `--format/-f FORMAT` (`md`, `txt`, `json`, `html`)
 - `--out-dir PATH` (default `~/Downloads`)
-- `--out-file PATH` (write a single deterministic `.md` path; incompatible with `--include-plain`)
+- `--out-file PATH` (write to a specific path)
 - `--backend docling|firecrawl` (when ingesting URLs)
 - `--refresh` (force re-ingest)
 - `--name NAME` (override the output filename base)
-- `--include-plain` (also write a `.txt` file)
-- `--no-markdown` (disable markdown export; combine with `--include-plain` if you still want output)
+- `--include-plain` (legacy: also write a `.txt` file)
+- `--no-markdown` (legacy: disable markdown export)
+
+### Semantic Search (RAG)
+
+Insights supports **semantic search** over your sources using OpenAI embeddings. This enables finding relevant content by meaning rather than just keywords.
+
+#### Indexing sources
+
+Before you can search, you need to index your sources. Indexing:
+1. Chunks the document text into ~1000 character segments
+2. Generates embeddings using OpenAI's `text-embedding-3-small` model
+3. Stores the vectors for fast similarity search
+
+**Index a single source:**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" index source_id
+uv run insights --app-dir "$INSIGHTS_APP_DIR" index "https://example.com/article"
+```
+
+**Index all sources:**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" index --all
+```
+
+**Re-index (update existing):**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" index source_id --reindex
+uv run insights --app-dir "$INSIGHTS_APP_DIR" index --all --reindex
+```
+
+Index options:
+- `--all` — Index all sources that aren't already indexed
+- `--reindex` — Re-index even if already indexed
+- `--chunk-size N` — Chunk size in characters (default: 1000)
+- `--chunk-overlap N` — Overlap between chunks (default: 100)
+
+Note: Indexing requires `OPENAI_API_KEY` for embeddings.
+
+#### Semantic search
+
+Search over indexed sources by meaning:
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" search "how does authentication work?"
+```
+
+**Filter to specific sources:**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" search "error handling" -s source_id_1 -s source_id_2
+```
+
+**JSON output:**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" search "main thesis" --json
+```
+
+Search options:
+- `-s/--source` — Filter to specific sources (repeatable)
+- `-n/--limit N` — Maximum results (default: 10)
+- `--json` — Output as JSON
+
+The search returns the most relevant chunks from your indexed sources, ranked by semantic similarity to your query.
 
 ### Inspecting the DB directly (sqlite3)
 

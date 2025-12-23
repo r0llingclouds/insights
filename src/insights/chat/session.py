@@ -9,7 +9,7 @@ from rich.console import Console
 
 from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
-from insights.context import build_context
+from insights.context import build_context, build_context_with_retrieval
 from insights.storage.db import Database
 from insights.storage.models import MessageRole, Source
 from insights.utils.progress import make_progress_printer
@@ -26,6 +26,8 @@ class ChatRunConfig:
     max_context_tokens: int
     max_output_tokens: int
     temperature: float
+    stream: bool = True
+    retrieval: bool = False
 
 
 def _pick_llm(provider: str, model: str | None):
@@ -117,8 +119,8 @@ def run_chat(
         conv = db.create_conversation(title=None)
         conv_id = conv.id
         console.print(f"New conversation: {conv_id}")
-        if not sources:
-            raise ValueError("Provide at least one source when starting a new conversation.")
+        if not sources and not config.retrieval:
+            raise ValueError("Provide at least one source when starting a new conversation (or use --retrieval).")
 
     # Bind initial sources if provided.
     for ref in sources:
@@ -139,8 +141,12 @@ def run_chat(
 
     client, used_model = _pick_llm(config.provider, config.model)
 
+    # Track retrieval mode (can be toggled during chat)
+    use_retrieval = config.retrieval
+
     session = PromptSession()
-    console.print("Type /help for commands.")
+    mode_str = " (RAG mode)" if use_retrieval else ""
+    console.print(f"Type /help for commands.{mode_str}")
 
     with patch_stdout():
         while True:
@@ -170,6 +176,7 @@ def run_chat(
                                 "/save <title>           Set conversation title",
                                 "/export <path>          Export conversation transcript",
                                 "/export-md [dir]        Export bound sources to markdown files (default: ~/Downloads)",
+                                "/retrieval [on|off]     Toggle RAG mode (semantic search)",
                                 "/exit                   Exit chat",
                             ]
                         )
@@ -247,25 +254,51 @@ def run_chat(
                         for p in written:
                             console.print(str(p), markup=False, highlight=False)
                     continue
+                if cmd == "/retrieval":
+                    arg_lower = arg.strip().lower()
+                    if arg_lower == "on":
+                        use_retrieval = True
+                        console.print("RAG mode enabled.")
+                    elif arg_lower == "off":
+                        use_retrieval = False
+                        console.print("RAG mode disabled.")
+                    else:
+                        # Toggle if no argument
+                        use_retrieval = not use_retrieval
+                        status = "enabled" if use_retrieval else "disabled"
+                        console.print(f"RAG mode {status}.")
+                    continue
 
                 console.print("Unknown command. Type /help.")
                 continue
 
             # Normal user message
             bound_sources = db.list_conversation_sources(conv_id)
-            if not bound_sources:
-                console.print("No sources bound. Use /add <source>.")
+            if not bound_sources and not use_retrieval:
+                console.print("No sources bound. Use /add <source> or /retrieval on.")
                 continue
 
             db.add_message(conversation_id=conv_id, role=MessageRole.USER, content=text)
 
-            context = build_context(
-                db=db,
-                source_ids=[s.id for s in bound_sources],
-                question=text,
-                max_context_tokens=config.max_context_tokens,
-                progress=progress,
-            )
+            if use_retrieval:
+                # Search all indexed sources if none bound, otherwise filter to bound sources
+                source_ids = [s.id for s in bound_sources] if bound_sources else None
+                context = build_context_with_retrieval(
+                    db=db,
+                    source_ids=source_ids,
+                    query=text,
+                    cache_dir=cache_dir,
+                    max_context_tokens=config.max_context_tokens,
+                    progress=progress,
+                )
+            else:
+                context = build_context(
+                    db=db,
+                    source_ids=[s.id for s in bound_sources],
+                    question=text,
+                    max_context_tokens=config.max_context_tokens,
+                    progress=progress,
+                )
 
             history = db.list_messages(conversation_id=conv_id)
             # Keep last ~12 non-system messages for context.
@@ -280,23 +313,43 @@ def run_chat(
             user_payload = f"Sources context:\n\n{context.context_text}\n\nUser question:\n{text}".strip()
             messages.append(ChatMessage(role="user", content=user_payload))
 
-            resp = client.generate(
-                messages=messages,
-                model=used_model,
-                temperature=config.temperature,
-                max_tokens=config.max_output_tokens,
-            )
-
-            db.add_message(
-                conversation_id=conv_id,
-                role=MessageRole.ASSISTANT,
-                content=resp.text,
-                provider=resp.provider,
-                model=resp.model,
-                usage=resp.usage,
-            )
-
-            console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
-            # FULL-only context: no chunk citations.
+            if config.stream:
+                # Stream response tokens as they arrive
+                full_text_parts: list[str] = []
+                for token in client.generate_stream(
+                    messages=messages,
+                    model=used_model,
+                    temperature=config.temperature,
+                    max_tokens=config.max_output_tokens,
+                ):
+                    console.print(token, end="", markup=False, highlight=False)
+                    full_text_parts.append(token)
+                console.print()  # Newline after streaming
+                response_text = "".join(full_text_parts).strip()
+                # Note: streaming doesn't return usage stats
+                db.add_message(
+                    conversation_id=conv_id,
+                    role=MessageRole.ASSISTANT,
+                    content=response_text,
+                    provider=client.provider,
+                    model=used_model,
+                    usage=None,
+                )
+            else:
+                resp = client.generate(
+                    messages=messages,
+                    model=used_model,
+                    temperature=config.temperature,
+                    max_tokens=config.max_output_tokens,
+                )
+                db.add_message(
+                    conversation_id=conv_id,
+                    role=MessageRole.ASSISTANT,
+                    content=resp.text,
+                    provider=resp.provider,
+                    model=resp.model,
+                    usage=resp.usage,
+                )
+                console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
 
 

@@ -12,12 +12,12 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from insights.config import resolve_paths
+from insights.config import load_config, resolve_paths
 from insights.chat.session import ChatRunConfig, run_chat
 from insights.ingest import IngestBackend, ingest as ingest_source
 from insights.ingest.detect import detect_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
-from insights.context import build_context
+from insights.context import build_context, build_context_with_retrieval
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
 from insights.utils.progress import make_progress_printer
@@ -109,12 +109,14 @@ def _global_options(
     ] = False,
 ) -> None:
     paths = resolve_paths(db=db, app_dir=app_dir)
+    config = load_config(app_dir=paths.app_dir)
     ctx.obj = {
         "paths": paths,
+        "config": config,
         "agent": {
             "allow_side_effects": bool(yes),
-            "model": agent_model,
-            "max_steps": int(agent_max_steps),
+            "model": agent_model or config.agent.model,
+            "max_steps": int(agent_max_steps) if agent_max_steps != 10 else config.agent.max_steps,
             "verbose": bool(agent_verbose),
         },
     }
@@ -923,9 +925,9 @@ def ask(
         typer.Option(
             "--source",
             "-s",
-            help="Source id or a path/URL (will ingest if not already cached). Repeatable.",
+            help="Source id or a path/URL (will ingest if not already cached). Repeatable. Optional with --retrieval.",
         ),
-    ],
+    ] = [],
     provider: Annotated[str, typer.Option("--provider", help="openai|anthropic")] = "openai",
     model: Annotated[str | None, typer.Option("--model", help="Model name override.")] = None,
     backend: Annotated[
@@ -942,10 +944,13 @@ def ask(
         int, typer.Option("--max-output-tokens", help="Max output tokens for the LLM.")
     ] = 800,
     temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature.")] = 0.2,
+    retrieval: Annotated[
+        bool, typer.Option("--retrieval", "-r", help="Use semantic search (RAG) instead of full documents. Searches all indexed sources if no --source given.")
+    ] = False,
 ) -> None:
     """Ask a one-off question over one or more sources."""
-    if not source:
-        raise typer.BadParameter("At least one --source is required.")
+    if not source and not retrieval:
+        raise typer.BadParameter("At least one --source is required (or use --retrieval to search all indexed sources).")
 
     paths = ctx.obj["paths"]
     db = Database.open(paths.db_path)
@@ -1003,13 +1008,23 @@ def ask(
             source_ids.append(ingested.source.id)
 
         progress = make_progress_printer(prefix="insights")
-        context = build_context(
-            db=db,
-            source_ids=source_ids,
-            question=question,
-            max_context_tokens=max_context_tokens,
-            progress=progress,
-        )
+        if retrieval:
+            context = build_context_with_retrieval(
+                db=db,
+                source_ids=source_ids if source_ids else None,
+                query=question,
+                cache_dir=paths.cache_dir,
+                max_context_tokens=max_context_tokens,
+                progress=progress,
+            )
+        else:
+            context = build_context(
+                db=db,
+                source_ids=source_ids,
+                question=question,
+                max_context_tokens=max_context_tokens,
+                progress=progress,
+            )
     finally:
         db.close()
 
@@ -1041,13 +1056,15 @@ def ask(
 
     console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
     # Persist this one-off Q&A as a resumable conversation.
+    # Use sources from context result (handles retrieval without explicit sources)
+    used_source_ids = [s.id for s in context.sources] if context.sources else source_ids
     db = Database.open(paths.db_path)
     try:
         from insights.chat.save import save_one_shot_qa
 
         conv_id = save_one_shot_qa(
             db,
-            source_ids=source_ids,
+            source_ids=used_source_ids,
             question=question,
             answer=resp.text,
             provider=resp.provider,
@@ -1081,7 +1098,7 @@ def chat(
         str | None,
         typer.Option("--conversation", help="Conversation id to resume."),
     ] = None,
-    provider: Annotated[str, typer.Option("--provider", help="openai|anthropic")] = "openai",
+    provider: Annotated[str | None, typer.Option("--provider", help="openai|anthropic (default from config)")] = None,
     model: Annotated[str | None, typer.Option("--model", help="Model name override.")] = None,
     backend: Annotated[
         IngestBackend,
@@ -1091,15 +1108,22 @@ def chat(
         bool, typer.Option("--refresh-sources", help="Force re-ingestion for provided sources.")
     ] = False,
     max_context_tokens: Annotated[
-        int, typer.Option("--max-context-tokens", help="Context budget (token estimate).")
-    ] = 12000,
+        int | None, typer.Option("--max-context-tokens", help="Context budget (default from config).")
+    ] = None,
     max_output_tokens: Annotated[
-        int, typer.Option("--max-output-tokens", help="Max output tokens for the LLM.")
-    ] = 800,
-    temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature.")] = 0.2,
+        int | None, typer.Option("--max-output-tokens", help="Max output tokens (default from config).")
+    ] = None,
+    temperature: Annotated[float | None, typer.Option("--temperature", help="Sampling temperature (default from config).")] = None,
+    no_stream: Annotated[
+        bool, typer.Option("--no-stream", help="Disable streaming (wait for full response).")
+    ] = False,
+    retrieval: Annotated[
+        bool, typer.Option("--retrieval", "-r", help="Use semantic search (RAG) for context. Searches all indexed sources if no --source given.")
+    ] = False,
 ) -> None:
     """Interactive chat with persistent conversations."""
     paths = ctx.obj["paths"]
+    config = ctx.obj["config"]
     db = Database.open(paths.db_path)
     try:
         run_chat(
@@ -1108,13 +1132,15 @@ def chat(
             conversation_id=conversation,
             sources=source,
             config=ChatRunConfig(
-                provider=provider,
-                model=model,
+                provider=provider or config.defaults.provider,
+                model=model or config.defaults.model,
                 backend=backend,
                 refresh_sources=refresh_sources,
-                max_context_tokens=max_context_tokens,
-                max_output_tokens=max_output_tokens,
-                temperature=temperature,
+                max_context_tokens=max_context_tokens if max_context_tokens is not None else config.defaults.max_context_tokens,
+                max_output_tokens=max_output_tokens if max_output_tokens is not None else config.defaults.max_output_tokens,
+                temperature=temperature if temperature is not None else config.defaults.temperature,
+                stream=config.defaults.stream if not no_stream else False,
+                retrieval=retrieval,
             ),
         )
     finally:
@@ -1139,7 +1165,11 @@ def export_text(
     ] = None,  # resolved at runtime (default: ~/Downloads)
     out_file: Annotated[
         Path | None,
-        typer.Option("--out-file", help="Write a single markdown file to this exact path (deterministic output)."),
+        typer.Option("--out-file", help="Write a single file to this exact path (deterministic output)."),
+    ] = None,
+    format: Annotated[
+        str | None,
+        typer.Option("--format", "-f", help="Export format: md, txt, json, html (default: md)."),
     ] = None,
     backend: Annotated[
         IngestBackend,
@@ -1149,15 +1179,21 @@ def export_text(
     name: Annotated[str | None, typer.Option("--name", help="Optional base filename override.")] = None,
     include_plain: Annotated[
         bool,
-        typer.Option("--include-plain/--no-plain", help="Write plain text (.txt)."),
+        typer.Option("--include-plain/--no-plain", help="Write plain text (.txt). Ignored if --format is set."),
     ] = False,
     include_markdown: Annotated[
         bool,
-        typer.Option("--include-markdown/--no-markdown", help="Write markdown (.md). If markdown isn't available, falls back to plain text/transcript."),
+        typer.Option("--include-markdown/--no-markdown", help="Write markdown (.md). Ignored if --format is set."),
     ] = True,
 ) -> None:
     """
-    Export a source's cached plain text/transcript (and markdown when available) to files.
+    Export a source's cached content to files.
+
+    Formats:
+    - md: Markdown (default)
+    - txt: Plain text
+    - json: JSON with full metadata
+    - html: Styled HTML page
 
     - Resolves by source id / URL / title / file basename
     - Auto-ingests if not cached
@@ -1168,25 +1204,91 @@ def export_text(
         raise typer.BadParameter("source_ref cannot be empty")
 
     paths = ctx.obj["paths"]
-    from insights.text_export import AmbiguousSourceRefError, default_downloads_dir, export_source_text
+    from insights.text_export import (
+        AmbiguousSourceRefError,
+        ExportFormat,
+        default_downloads_dir,
+        export_source_html,
+        export_source_json,
+        export_source_text,
+    )
 
-    if out_file is not None and include_plain:
-        raise typer.BadParameter("--out-file writes a single .md; combine with --no-plain (default) or omit --include-plain.")
+    progress = make_progress_printer(prefix="insights")
+    written: list[Path] = []
 
     try:
-        progress = make_progress_printer(prefix="insights")
-        written = export_source_text(
-            paths=paths,
-            source_ref=ref,
-            out_dir=out_dir or default_downloads_dir(),
-            out_file=out_file,
-            backend=backend,
-            refresh=refresh,
-            name=name,
-            include_plain=include_plain,
-            include_markdown=include_markdown,
-            progress=progress,
-        )
+        # If --format is specified, use the new export functions
+        if format:
+            fmt = format.lower().strip()
+            if fmt in ("json",):
+                path = export_source_json(
+                    paths=paths,
+                    source_ref=ref,
+                    out_dir=out_dir or default_downloads_dir(),
+                    out_file=out_file,
+                    backend=backend,
+                    refresh=refresh,
+                    name=name,
+                    progress=progress,
+                )
+                written.append(path)
+            elif fmt in ("html",):
+                path = export_source_html(
+                    paths=paths,
+                    source_ref=ref,
+                    out_dir=out_dir or default_downloads_dir(),
+                    out_file=out_file,
+                    backend=backend,
+                    refresh=refresh,
+                    name=name,
+                    progress=progress,
+                )
+                written.append(path)
+            elif fmt in ("md", "markdown"):
+                written = export_source_text(
+                    paths=paths,
+                    source_ref=ref,
+                    out_dir=out_dir or default_downloads_dir(),
+                    out_file=out_file,
+                    backend=backend,
+                    refresh=refresh,
+                    name=name,
+                    include_plain=False,
+                    include_markdown=True,
+                    progress=progress,
+                )
+            elif fmt in ("txt", "text", "plain"):
+                written = export_source_text(
+                    paths=paths,
+                    source_ref=ref,
+                    out_dir=out_dir or default_downloads_dir(),
+                    out_file=None,  # txt doesn't support out_file
+                    backend=backend,
+                    refresh=refresh,
+                    name=name,
+                    include_plain=True,
+                    include_markdown=False,
+                    progress=progress,
+                )
+            else:
+                raise typer.BadParameter(f"Unknown format: {fmt}. Use: md, txt, json, html")
+        else:
+            # Legacy behavior with --include-plain / --include-markdown
+            if out_file is not None and include_plain:
+                raise typer.BadParameter("--out-file writes a single .md; combine with --no-plain (default) or omit --include-plain.")
+
+            written = export_source_text(
+                paths=paths,
+                source_ref=ref,
+                out_dir=out_dir or default_downloads_dir(),
+                out_file=out_file,
+                backend=backend,
+                refresh=refresh,
+                name=name,
+                include_plain=include_plain,
+                include_markdown=include_markdown,
+                progress=progress,
+            )
     except AmbiguousSourceRefError as e:
         err_console.print("Ambiguous source reference. Did you mean:", markup=False, highlight=False)
         for s in e.suggestions:
@@ -1195,5 +1297,230 @@ def export_text(
 
     for p in written:
         console.print(str(p), markup=False, highlight=False)
+
+
+@app.command("index")
+def index_source_cmd(
+    ctx: typer.Context,
+    source_ref: Annotated[
+        str | None,
+        typer.Argument(help="Source id/url/path to index. If omitted with --all, indexes all sources."),
+    ] = None,
+    all_sources: Annotated[
+        bool,
+        typer.Option("--all", help="Index all sources that aren't already indexed."),
+    ] = False,
+    reindex: Annotated[
+        bool,
+        typer.Option("--reindex", help="Re-index even if already indexed."),
+    ] = False,
+    chunk_size: Annotated[
+        int,
+        typer.Option("--chunk-size", help="Chunk size in characters."),
+    ] = 1000,
+    chunk_overlap: Annotated[
+        int,
+        typer.Option("--chunk-overlap", help="Overlap between chunks in characters."),
+    ] = 100,
+) -> None:
+    """
+    Index sources for semantic search (RAG).
+
+    Creates embeddings and stores them in a vector database for fast similarity search.
+    """
+    if not source_ref and not all_sources:
+        raise typer.BadParameter("Provide a source reference or use --all")
+
+    paths = ctx.obj["paths"]
+    from insights.retrieval.search import index_source
+    from insights.retrieval.store import VectorStore
+
+    db = Database.open(paths.db_path)
+    vector_store = VectorStore(persist_dir=paths.cache_dir / "vectors")
+
+    def progress(msg: str) -> None:
+        err_console.print(f"index: {msg}", markup=False, highlight=False)
+
+    try:
+        if all_sources:
+            # Index all sources
+            sources = db.list_sources(limit=5000)
+            indexed_ids = vector_store.get_indexed_sources() if not reindex else set()
+            to_index = [s for s in sources if s.id not in indexed_ids]
+
+            if not to_index:
+                console.print("All sources already indexed.")
+                return
+
+            console.print(f"Indexing {len(to_index)} sources...")
+
+            for i, source in enumerate(to_index, 1):
+                progress(f"[{i}/{len(to_index)}] {source.title or source.locator}")
+
+                # Get the latest document
+                if source.kind == SourceKind.YOUTUBE:
+                    extractor_preference = ["assemblyai"]
+                elif source.kind == SourceKind.URL:
+                    extractor_preference = ["docling", "firecrawl"]
+                else:
+                    extractor_preference = ["docling"]
+
+                doc = db.get_latest_document_for_source(
+                    source_id=source.id,
+                    extractor_preference=extractor_preference,
+                )
+                if not doc:
+                    progress(f"  Skipping (no document found)")
+                    continue
+
+                plain_text = doc.get("plain_text", "")
+                source_version_id = doc.get("source_version_id", "")
+
+                if not plain_text or not source_version_id:
+                    progress(f"  Skipping (no content)")
+                    continue
+
+                try:
+                    count = index_source(
+                        source_id=source.id,
+                        source_version_id=source_version_id,
+                        plain_text=plain_text,
+                        store=vector_store,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        progress=progress,
+                    )
+                    progress(f"  Indexed {count} chunks")
+                except Exception as e:
+                    progress(f"  Error: {e}")
+
+            console.print(f"Total chunks in index: {vector_store.count()}")
+        else:
+            # Index single source
+            from insights.agent.resolve import resolve_source
+
+            resolved = resolve_source(db=db, ref=source_ref, suggestions_limit=5)
+            if not resolved.found or not resolved.source:
+                raise typer.BadParameter(f"Source not found: {source_ref}")
+
+            source = resolved.source
+
+            # Check if already indexed
+            indexed_ids = vector_store.get_indexed_sources()
+            if source.id in indexed_ids and not reindex:
+                console.print(f"Source already indexed. Use --reindex to re-index.")
+                return
+
+            # Get the latest document
+            if source.kind == SourceKind.YOUTUBE:
+                extractor_preference = ["assemblyai"]
+            elif source.kind == SourceKind.URL:
+                extractor_preference = ["docling", "firecrawl"]
+            else:
+                extractor_preference = ["docling"]
+
+            doc = db.get_latest_document_for_source(
+                source_id=source.id,
+                extractor_preference=extractor_preference,
+            )
+            if not doc:
+                raise typer.BadParameter("No document found for this source. Try ingesting first.")
+
+            plain_text = doc.get("plain_text", "")
+            source_version_id = doc.get("source_version_id", "")
+
+            if not plain_text or not source_version_id:
+                raise typer.BadParameter("Source has no content to index.")
+
+            progress(f"Indexing: {source.title or source.locator}")
+
+            count = index_source(
+                source_id=source.id,
+                source_version_id=source_version_id,
+                plain_text=plain_text,
+                store=vector_store,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                progress=progress,
+            )
+
+            console.print(f"Indexed {count} chunks for source {source.id}")
+            console.print(f"Total chunks in index: {vector_store.count()}")
+    finally:
+        db.close()
+
+
+@app.command("search")
+def search_cmd(
+    ctx: typer.Context,
+    query: Annotated[str, typer.Argument(help="Search query.")],
+    source: Annotated[
+        list[str],
+        typer.Option("--source", "-s", help="Filter to specific sources. Repeatable."),
+    ] = [],
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Maximum results.")] = 10,
+    as_json: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
+) -> None:
+    """
+    Semantic search over indexed sources.
+
+    Finds relevant chunks based on meaning, not just keywords.
+    """
+    if not query.strip():
+        raise typer.BadParameter("Query cannot be empty")
+
+    paths = ctx.obj["paths"]
+    from insights.retrieval.search import semantic_search
+    from insights.retrieval.store import VectorStore
+
+    db = Database.open(paths.db_path)
+    vector_store = VectorStore(persist_dir=paths.cache_dir / "vectors")
+
+    try:
+        # Resolve source IDs if provided
+        source_ids: list[str] | None = None
+        if source:
+            from insights.agent.resolve import resolve_source
+            source_ids = []
+            for ref in source:
+                resolved = resolve_source(db=db, ref=ref, suggestions_limit=1)
+                if resolved.found and resolved.source:
+                    source_ids.append(resolved.source.id)
+
+        results = semantic_search(
+            query,
+            store=vector_store,
+            n_results=limit,
+            source_ids=source_ids,
+        )
+
+        if not results:
+            console.print("No results found.")
+            return
+
+        if as_json:
+            import json
+            output = [
+                {
+                    "source_id": r.source_id,
+                    "chunk_index": r.chunk_index,
+                    "score": round(r.score, 4),
+                    "content": r.content[:500] + "..." if len(r.content) > 500 else r.content,
+                }
+                for r in results
+            ]
+            console.print(json.dumps(output, indent=2, ensure_ascii=False))
+        else:
+            for i, r in enumerate(results, 1):
+                source_obj = db.get_source_by_id(r.source_id)
+                title = source_obj.title if source_obj else r.source_id
+                preview = r.content[:200].replace("\n", " ")
+                if len(r.content) > 200:
+                    preview += "..."
+
+                console.print(f"\n[{i}] {title} (score: {r.score:.3f})")
+                console.print(f"    {preview}", markup=False, highlight=False)
+    finally:
+        db.close()
 
 

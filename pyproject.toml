@@ -16,6 +16,7 @@ dependencies = [
   "yt-dlp",
   "assemblyai",
   "firecrawl-py",
+  "numpy",
 ]
 
 [project.scripts]
