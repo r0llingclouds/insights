@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from insights.config import Paths
-from insights.ingest import IngestBackend, ingest as ingest_source
+from insights.ingest import IngestBackend, extract_ephemeral, ingest as ingest_source
 from insights.storage.db import Database
 from insights.storage.models import SourceKind
 from insights.utils.progress import ProgressFn
@@ -52,6 +52,7 @@ def export_source_text(
     out_file: Path | None = None,
     backend: IngestBackend = IngestBackend.DOCLING,
     refresh: bool = False,
+    no_store: bool = False,
     name: str | None = None,
     include_plain: bool = False,
     include_markdown: bool = True,
@@ -59,6 +60,9 @@ def export_source_text(
 ) -> list[Path]:
     """
     Resolve/ingest a source and write its cached plain_text (.txt) and markdown (.md) to files.
+
+    Args:
+        no_store: Don't persist source to DB (reuse cache if exists).
 
     Returns:
         List of written file paths.
@@ -87,7 +91,14 @@ def export_source_text(
             )
 
         source_version_id: str | None = None
-        # Ingest if missing, or refresh if requested.
+        plain_text: str = ""
+        markdown: str = ""
+        source_title: str | None = None
+        source_locator: str = ref
+        source_kind: SourceKind | None = None
+        source_id: str | None = None
+
+        # Ingest/extract if missing, or refresh if requested.
         if source is None or refresh:
             if source is None:
                 input_value = ref
@@ -96,51 +107,87 @@ def export_source_text(
                     input_value = f"https://www.youtube.com/watch?v={source.locator}"
                 else:
                     input_value = source.locator
-            result = ingest_source(
-                db=db,
-                input_value=input_value,
-                cache_dir=paths.cache_dir,
-                forced_type="auto",
-                url_backend=backend,
-                refresh=bool(refresh),
-                title=None,
-                summary_progress=progress,
-            )
-            source = result.source
-            source_version_id = result.source_version.id
 
-        # Decide extractor preference.
-        if source.kind == SourceKind.YOUTUBE:
-            extractor_preference = ["assemblyai"]
-        elif source.kind == SourceKind.URL:
-            extractor_preference = [backend.value, "firecrawl" if backend.value != "firecrawl" else "docling"]
-        else:
-            extractor_preference = ["docling"]
+            if no_store and source is None:
+                # Ephemeral mode: extract without storing (reuse cache if exists).
+                result = extract_ephemeral(
+                    db=db,
+                    input_value=input_value,
+                    cache_dir=paths.cache_dir,
+                    forced_type="auto",
+                    url_backend=backend,
+                    progress=progress,
+                )
+                if result.from_cache:
+                    # Source exists in DB - use it.
+                    assert result.source is not None
+                    source = result.source
+                    source_version_id = result.source_version.id if result.source_version else None
+                else:
+                    # Fresh extraction - use ephemeral document directly.
+                    assert result.document is not None
+                    plain_text = result.document.plain_text.strip()
+                    markdown = result.document.markdown.strip()
+                    source_title = result.document.title
+                    source_locator = result.document.locator
+                    source_kind = result.document.kind
+                    # No source_id for ephemeral docs.
+            else:
+                # Normal mode: ingest and store.
+                result = ingest_source(
+                    db=db,
+                    input_value=input_value,
+                    cache_dir=paths.cache_dir,
+                    forced_type="auto",
+                    url_backend=backend,
+                    refresh=bool(refresh),
+                    title=None,
+                    summary_progress=progress,
+                )
+                source = result.source
+                source_version_id = result.source_version.id
 
-        doc = db.get_latest_document_for_source(source_id=source.id, extractor_preference=extractor_preference)
-        if not doc and source_version_id:
-            plain = db.get_document_plain_text_by_source_version(source_version_id)
-            md = db.get_document_markdown_by_source_version(source_version_id)
-            doc = {"source_version_id": source_version_id, "plain_text": plain, "markdown": md, "extractor": None}
-        if not doc:
-            raise RuntimeError("No cached document found for this source. Try re-ingesting with --refresh.")
+        # If we have a source (from cache or ingest), get the document from DB.
+        if source is not None:
+            source_title = source.title
+            source_locator = source.locator
+            source_kind = source.kind
+            source_id = source.id
 
-        plain_text = (doc.get("plain_text") or "").strip()
-        markdown = (doc.get("markdown") or "").strip()
+            # Decide extractor preference.
+            if source.kind == SourceKind.YOUTUBE:
+                extractor_preference = ["assemblyai"]
+            elif source.kind == SourceKind.URL:
+                extractor_preference = [backend.value, "firecrawl" if backend.value != "firecrawl" else "docling"]
+            else:
+                extractor_preference = ["docling"]
 
+            doc = db.get_latest_document_for_source(source_id=source.id, extractor_preference=extractor_preference)
+            if not doc and source_version_id:
+                plain = db.get_document_plain_text_by_source_version(source_version_id)
+                md = db.get_document_markdown_by_source_version(source_version_id)
+                doc = {"source_version_id": source_version_id, "plain_text": plain, "markdown": md, "extractor": None}
+            if not doc:
+                raise RuntimeError("No cached document found for this source. Try re-ingesting with --refresh.")
+
+            plain_text = (doc.get("plain_text") or "").strip()
+            markdown = (doc.get("markdown") or "").strip()
+
+        # Build the filename.
         base = name
         if not base:
-            if source.title:
-                base = source.title
+            if source_title:
+                base = source_title
             else:
-                if source.kind == SourceKind.YOUTUBE:
-                    base = f"youtube_{source.locator}"
-                elif source.kind == SourceKind.URL:
-                    base = "url_" + re.sub(r"^https?://", "", source.locator).replace("/", "_")
+                if source_kind == SourceKind.YOUTUBE:
+                    base = f"youtube_{source_locator}"
+                elif source_kind == SourceKind.URL:
+                    base = "url_" + re.sub(r"^https?://", "", source_locator).replace("/", "_")
                 else:
-                    base = Path(source.locator).name
+                    base = Path(source_locator).name
 
-        stem = f"{safe_filename_base(base)}__{source.id}"
+        # For ephemeral docs, use "ephemeral" as the id suffix.
+        stem = f"{safe_filename_base(base)}__{source_id or 'ephemeral'}"
 
         written: list[Path] = []
         if include_markdown:
