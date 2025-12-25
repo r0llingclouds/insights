@@ -1103,6 +1103,18 @@ def ask(
 
     console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
 
+    # Print source citations
+    if context.sources:
+        console.print("\n---\nSources:", markup=False, highlight=False)
+        for source in context.sources:
+            kind_label = source.kind.value.capitalize()
+            title = source.title or source.locator
+            score = context.source_scores.get(source.id) if context.source_scores else None
+            if score is not None:
+                console.print(f"  [{kind_label}] {title} (score: {score:.3f})", markup=False, highlight=False)
+            else:
+                console.print(f"  [{kind_label}] {title}", markup=False, highlight=False)
+
     if no_store:
         # Ephemeral mode: don't save conversation.
         err_console.print("\n(no-store mode: conversation not saved)", markup=False, highlight=False)

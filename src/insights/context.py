@@ -39,6 +39,7 @@ class ContextBuildResult:
     context_text: str
     token_estimate: int
     sources: list[Source]
+    source_scores: dict[str, float] | None = None  # source_id -> relevance score (for RAG)
 
 
 def build_context(
@@ -201,6 +202,15 @@ def build_context_with_retrieval(
     if progress:
         progress(f"Found {len(results)} relevant chunks")
 
+    # Filter sources to only those with retrieved chunks, sorted by relevance
+    # Track highest score per source for sorting
+    source_max_score: dict[str, float] = {}
+    for r in results:
+        if r.source_id not in source_max_score or r.score > source_max_score[r.source_id]:
+            source_max_score[r.source_id] = r.score
+    sources = [s for s in sources if s.id in source_max_score]
+    sources.sort(key=lambda s: source_max_score[s.id], reverse=True)
+
     # Build context from retrieved chunks
     parts: list[str] = []
 
@@ -239,6 +249,7 @@ def build_context_with_retrieval(
         context_text=context_text,
         token_estimate=estimate_tokens(context_text),
         sources=sources,
+        source_scores=source_max_score,
     )
 
 
