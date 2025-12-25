@@ -2,6 +2,38 @@
 
 Ingest **local documents**, **web pages**, and **YouTube videos** into cached plain text, then run **Q&A / chat** over the sources using **OpenAI** or **Anthropic**.
 
+---
+
+### Index
+
+- [Install (uv)](#install-uv)
+- [Storage / caching](#storage--caching)
+- [Environment variables](#environment-variables)
+- [Configuration file (TOML)](#configuration-file-toml)
+- [Global options](#global-options-apply-to-all-commands)
+- [Source references](#source-references-how-to-refer-to-a-source)
+- [Natural-language agent](#natural-language-agent-anthropic-tool-use)
+- [Source descriptions](#source-descriptions-for-semantic-matching)
+- [Source titles](#source-titles-auto-generate-when-missing)
+- [Summaries](#summaries-per-source-version)
+- [Token counting](#token-counting-exact)
+- [Large document optimization](#large-document-optimization-auto-switch-to-haiku)
+- [Commands](#commands)
+  - [Ingest sources](#ingest-sources)
+  - [List sources](#list-sources-stored-in-the-db)
+  - [One-off Q&A (ask)](#one-off-qa-ask)
+  - [Interactive chat](#interactive-chat-persistent)
+  - [Streaming responses](#streaming-responses)
+  - [List conversations](#list-conversations-grouped-by-source)
+  - [Export source content](#export-source-content-to-files)
+- [Semantic Search (RAG)](#semantic-search-rag)
+  - [Indexing sources](#indexing-sources)
+  - [Semantic search](#semantic-search)
+  - [RAG-powered Q&A](#rag-powered-qa---retrieval)
+- [Inspecting the DB](#inspecting-the-db-directly-sqlite3)
+
+---
+
 ### Install (uv)
 
 ```bash
