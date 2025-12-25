@@ -357,14 +357,16 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summariz
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summarize." --provider anthropic --model claude-3-5-sonnet-latest
 ```
 
-Note: Insights always builds a FULL source context (with trimming) for chat/Q&A.
+Note: By default, Insights builds a FULL source context. Use `--retrieval` for RAG mode (semantic search over chunks).
 
 Ask options:
 - `-s/--source` (repeatable)
+- `-r/--retrieval` — Use semantic search (RAG) instead of full documents
 - `--provider openai|anthropic`
 - `--model MODEL`
 - `--backend docling|firecrawl` (when auto-ingesting URLs)
 - `--refresh-sources`
+- `--no-store` — Don't persist source or conversation to DB
 - `--max-context-tokens N`
 - `--max-output-tokens N`
 - `--temperature FLOAT`
@@ -404,6 +406,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" chat --conversation <conversation_
 Chat options:
 - `-s/--source` (repeatable)
 - `--conversation <conversation_id>`
+- `-r/--retrieval` — Use semantic search (RAG) instead of full documents
 - `--provider openai|anthropic`
 - `--model MODEL`
 - `--backend docling|firecrawl` (when auto-ingesting URLs)
@@ -576,6 +579,51 @@ Search options:
 - `--json` — Output as JSON
 
 The search returns the most relevant chunks from your indexed sources, ranked by semantic similarity to your query.
+
+#### RAG-powered Q&A (`--retrieval`)
+
+Use semantic search to answer questions. Instead of sending full documents to the LLM, Insights retrieves only the most relevant chunks:
+
+**Ask with RAG (searches all indexed sources):**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" ask "what are the main arguments?" --retrieval
+```
+
+**Ask with RAG (filter to specific sources):**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" ask "summarize the key points" -s source_id --retrieval
+```
+
+**Chat with RAG:**
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" chat --retrieval
+```
+
+When using `--retrieval`:
+- Retrieves the top 10 most relevant chunks across your indexed sources
+- Only sources with matching chunks are used (not all sources)
+- Sources are cited at the end with relevance scores (0-1, higher = more relevant)
+
+Example output:
+
+```
+[LLM answer based on retrieved chunks...]
+
+---
+Sources:
+  [Youtube] Why I Cant Stand IDE's After Using VIM (score: 0.847)
+  [Url] Modern Text Editors Compared (score: 0.823)
+  [File] editor-survey.pdf (score: 0.756)
+```
+
+RAG vs Full Context:
+- **Without `--retrieval`**: Sends full document text (good for single/few sources)
+- **With `--retrieval`**: Sends only relevant chunks (good for many sources or large documents)
+
+Note: Sources must be indexed first (`insights index --all`).
 
 ### Inspecting the DB directly (sqlite3)
 
