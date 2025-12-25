@@ -108,6 +108,28 @@ class IngestResult:
     reused_cache: bool
 
 
+@dataclass(frozen=True, slots=True)
+class EphemeralDocument:
+    """In-memory document content, not persisted to DB."""
+
+    locator: str
+    kind: SourceKind
+    title: str | None
+    markdown: str
+    plain_text: str
+    token_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class EphemeralResult:
+    """Result of ephemeral extraction (no DB storage for new sources)."""
+
+    document: EphemeralDocument | None  # Set if fresh extraction (not from cache)
+    source: Source | None  # Set if from cache
+    source_version: SourceVersion | None  # Set if from cache
+    from_cache: bool
+
+
 def ingest(
     *,
     db: Database,
@@ -498,4 +520,169 @@ def _ingest_youtube_assemblyai(
         )
         raise RuntimeError(msg) from e
 
+
+def extract_ephemeral(
+    *,
+    db: Database,
+    input_value: str,
+    cache_dir: Path | None = None,
+    forced_type: str = "auto",
+    url_backend: IngestBackend = IngestBackend.DOCLING,
+    progress: Callable[[str], None] | None = None,
+) -> EphemeralResult:
+    """
+    Extract content without storing to DB (unless already cached).
+
+    If the source already exists in the DB, returns the cached content.
+    Otherwise, extracts fresh content and returns it in-memory without DB writes.
+    """
+    detected = detect_source(input_value, forced_type=forced_type)
+
+    # Check if source already exists in DB.
+    try:
+        existing_source = db.get_source_by_kind_locator(kind=detected.kind, locator=detected.locator)
+    except KeyError:
+        existing_source = None
+
+    if existing_source:
+        # Source exists - return cached content.
+        docs = db.get_documents_for_sources_latest(
+            source_ids=[existing_source.id],
+            extractor_preference=["docling", "firecrawl", "assemblyai"],
+        )
+        if docs:
+            d = docs[0]
+            version = db.get_source_version_by_id(str(d["source_version_id"]))
+            return EphemeralResult(
+                document=None,
+                source=existing_source,
+                source_version=version,
+                from_cache=True,
+            )
+
+    # Source not in DB - extract ephemerally.
+    if detected.kind == SourceKind.FILE:
+        return _extract_file_ephemeral(detected=detected, progress=progress)
+    if detected.kind == SourceKind.URL:
+        return _extract_url_ephemeral(
+            detected=detected,
+            url_backend=url_backend,
+            progress=progress,
+        )
+    if detected.kind == SourceKind.YOUTUBE:
+        if cache_dir is None:
+            raise ValueError("cache_dir is required for YouTube extraction")
+        return _extract_youtube_ephemeral(
+            detected=detected,
+            cache_dir=cache_dir,
+            progress=progress,
+        )
+    raise ValueError(f"Unsupported source kind: {detected.kind.value}")
+
+
+def _extract_file_ephemeral(
+    *,
+    detected: DetectedSource,
+    progress: Callable[[str], None] | None,
+) -> EphemeralResult:
+    """Extract file content in-memory without DB storage."""
+    path = Path(detected.locator)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"Not a file: {path}")
+
+    _p(progress, f"extracting (docling): {path}")
+    markdown = extract_markdown_with_docling(str(path))
+    _p(progress, "extracting (docling): done")
+    plain = markdown_to_text(markdown)
+    token_est = estimate_tokens(plain)
+
+    return EphemeralResult(
+        document=EphemeralDocument(
+            locator=str(path),
+            kind=SourceKind.FILE,
+            title=detected.display_title,
+            markdown=markdown,
+            plain_text=plain,
+            token_count=token_est,
+        ),
+        source=None,
+        source_version=None,
+        from_cache=False,
+    )
+
+
+def _extract_url_ephemeral(
+    *,
+    detected: DetectedSource,
+    url_backend: IngestBackend,
+    progress: Callable[[str], None] | None,
+) -> EphemeralResult:
+    """Extract URL content in-memory without DB storage."""
+    url = detected.locator
+
+    if url_backend == IngestBackend.DOCLING:
+        _p(progress, f"extracting (docling): {url}")
+        markdown = extract_markdown_with_docling(url)
+        _p(progress, "extracting (docling): done")
+    elif url_backend == IngestBackend.FIRECRAWL:
+        _p(progress, f"extracting (firecrawl): {url}")
+        markdown = extract_markdown_with_firecrawl(url)
+        _p(progress, "extracting (firecrawl): done")
+    else:
+        raise ValueError(f"Unsupported URL backend: {url_backend}")
+
+    plain = markdown_to_text(markdown)
+    token_est = estimate_tokens(plain)
+
+    return EphemeralResult(
+        document=EphemeralDocument(
+            locator=url,
+            kind=SourceKind.URL,
+            title=detected.display_title,
+            markdown=markdown,
+            plain_text=plain,
+            token_count=token_est,
+        ),
+        source=None,
+        source_version=None,
+        from_cache=False,
+    )
+
+
+def _extract_youtube_ephemeral(
+    *,
+    detected: DetectedSource,
+    cache_dir: Path,
+    progress: Callable[[str], None] | None,
+) -> EphemeralResult:
+    """Extract YouTube transcript in-memory without DB storage."""
+    video_id = detected.locator
+
+    _p(progress, f"downloading (yt-dlp): {video_id}")
+    audio_path, yt_title = download_youtube_audio(video_id=video_id, cache_dir=cache_dir, refresh=False)
+    _p(progress, "downloading (yt-dlp): done")
+
+    _p(progress, f"transcribing (assemblyai): {audio_path.name}")
+    text = transcribe_with_assemblyai(audio_path=audio_path)
+    _p(progress, "transcribing (assemblyai): done")
+
+    markdown = text.strip()
+    plain = markdown
+    token_est = estimate_tokens(plain)
+
+    return EphemeralResult(
+        document=EphemeralDocument(
+            locator=video_id,
+            kind=SourceKind.YOUTUBE,
+            title=yt_title or detected.display_title,
+            markdown=markdown,
+            plain_text=plain,
+            token_count=token_est,
+        ),
+        source=None,
+        source_version=None,
+        from_cache=False,
+    )
 

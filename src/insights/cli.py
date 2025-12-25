@@ -14,7 +14,7 @@ from rich.table import Table
 
 from insights.config import load_config, resolve_paths
 from insights.chat.session import ChatRunConfig, run_chat
-from insights.ingest import IngestBackend, ingest as ingest_source
+from insights.ingest import EphemeralDocument, IngestBackend, extract_ephemeral, ingest as ingest_source
 from insights.ingest.detect import detect_source
 from insights.llm import AnthropicClient, ChatMessage, OpenAIClient
 from insights.context import build_context, build_context_with_retrieval
@@ -937,6 +937,9 @@ def ask(
     refresh_sources: Annotated[
         bool, typer.Option("--refresh-sources", help="Force re-ingestion for provided sources.")
     ] = False,
+    no_store: Annotated[
+        bool, typer.Option("--no-store", help="Don't persist source or conversation to DB (reuse cache if exists).")
+    ] = False,
     max_context_tokens: Annotated[
         int, typer.Option("--max-context-tokens", help="Context budget (token estimate).")
     ] = 12000,
@@ -956,7 +959,10 @@ def ask(
     db = Database.open(paths.db_path)
     try:
         source_ids: list[str] = []
+        ephemeral_docs: list[EphemeralDocument] = []
+
         for ref in source:
+            # Check if ref is an existing source ID first.
             existing = db.get_source_by_id(ref)
             if existing:
                 err_console.print(
@@ -966,49 +972,88 @@ def ask(
                 )
                 source_ids.append(existing.id)
                 continue
-            # Auto-ingest when not found by id.
-            ingested = ingest_source(
-                db=db,
-                input_value=ref,
-                cache_dir=paths.cache_dir,
-                forced_type="auto",
-                url_backend=backend,
-                refresh=refresh_sources,
-                title=None,
-            )
-            if ingested.reused_cache:
-                err_console.print(
-                    f"(cache) {ingested.source.kind.value} {ingested.source.locator} (extractor={ingested.source_version.extractor})",
-                    markup=False,
-                    highlight=False,
-                )
-            try:
-                from insights.describe import ensure_source_description
 
-                ensure_source_description(
+            if no_store:
+                # Ephemeral mode: extract without storing (reuse cache if exists).
+                progress_fn = make_progress_printer(prefix="insights")
+                result = extract_ephemeral(
                     db=db,
-                    source_id=ingested.source.id,
-                    source_version_id=ingested.source_version.id,
-                    force=bool(refresh_sources),
+                    input_value=ref,
+                    cache_dir=paths.cache_dir,
+                    forced_type="auto",
+                    url_backend=backend,
+                    progress=progress_fn,
                 )
-            except Exception as e:
-                # Never fail ask due to description generation.
-                logger.debug("Description generation failed for source_id=%s: %s", ingested.source.id, e)
-            try:
-                from insights.title import ensure_source_title
+                if result.from_cache:
+                    # Source exists in DB - use it.
+                    assert result.source is not None
+                    err_console.print(
+                        f"(cache) {result.source.kind.value} {result.source.locator}",
+                        markup=False,
+                        highlight=False,
+                    )
+                    source_ids.append(result.source.id)
+                else:
+                    # Fresh extraction - don't store.
+                    assert result.document is not None
+                    err_console.print(
+                        f"(ephemeral) {result.document.kind.value} {result.document.locator}",
+                        markup=False,
+                        highlight=False,
+                    )
+                    ephemeral_docs.append(result.document)
+            else:
+                # Normal mode: ingest and store.
+                ingested = ingest_source(
+                    db=db,
+                    input_value=ref,
+                    cache_dir=paths.cache_dir,
+                    forced_type="auto",
+                    url_backend=backend,
+                    refresh=refresh_sources,
+                    title=None,
+                )
+                if ingested.reused_cache:
+                    err_console.print(
+                        f"(cache) {ingested.source.kind.value} {ingested.source.locator} (extractor={ingested.source_version.extractor})",
+                        markup=False,
+                        highlight=False,
+                    )
+                try:
+                    from insights.describe import ensure_source_description
 
-                ensure_source_title(
-                    db=db,
-                    source_id=ingested.source.id,
-                    source_version_id=ingested.source_version.id,
-                    force=False,
-                )
-            except Exception as e:
-                logger.debug("Title generation failed for source_id=%s: %s", ingested.source.id, e)
-            source_ids.append(ingested.source.id)
+                    ensure_source_description(
+                        db=db,
+                        source_id=ingested.source.id,
+                        source_version_id=ingested.source_version.id,
+                        force=bool(refresh_sources),
+                    )
+                except Exception as e:
+                    # Never fail ask due to description generation.
+                    logger.debug("Description generation failed for source_id=%s: %s", ingested.source.id, e)
+                try:
+                    from insights.title import ensure_source_title
+
+                    ensure_source_title(
+                        db=db,
+                        source_id=ingested.source.id,
+                        source_version_id=ingested.source_version.id,
+                        force=False,
+                    )
+                except Exception as e:
+                    logger.debug("Title generation failed for source_id=%s: %s", ingested.source.id, e)
+                source_ids.append(ingested.source.id)
 
         progress = make_progress_printer(prefix="insights")
         if retrieval:
+            # RAG mode: semantic search over indexed chunks
+            # Note: ephemeral docs not supported with retrieval (they need to be indexed first)
+            if ephemeral_docs:
+                err_console.print(
+                    "Warning: --retrieval ignores ephemeral sources (use --no-store without --retrieval for ephemeral mode)",
+                    markup=False,
+                    highlight=False,
+                )
             context = build_context_with_retrieval(
                 db=db,
                 source_ids=source_ids if source_ids else None,
@@ -1018,9 +1063,11 @@ def ask(
                 progress=progress,
             )
         else:
+            # Full context mode: supports both stored and ephemeral sources
             context = build_context(
                 db=db,
-                source_ids=source_ids,
+                source_ids=source_ids if source_ids else None,
+                ephemeral_docs=ephemeral_docs if ephemeral_docs else None,
                 question=question,
                 max_context_tokens=max_context_tokens,
                 progress=progress,
@@ -1055,32 +1102,36 @@ def ask(
     )
 
     console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
-    # Persist this one-off Q&A as a resumable conversation.
-    # Use sources from context result (handles retrieval without explicit sources)
-    used_source_ids = [s.id for s in context.sources] if context.sources else source_ids
-    db = Database.open(paths.db_path)
-    try:
-        from insights.chat.save import save_one_shot_qa
 
-        conv_id = save_one_shot_qa(
-            db,
-            source_ids=used_source_ids,
-            question=question,
-            answer=resp.text,
-            provider=resp.provider,
-            model=resp.model,
-            usage=resp.usage,
+    if no_store:
+        # Ephemeral mode: don't save conversation.
+        err_console.print("\n(no-store mode: conversation not saved)", markup=False, highlight=False)
+    else:
+        # Persist this one-off Q&A as a resumable conversation.
+        # Use sources from context result (handles retrieval without explicit sources)
+        used_source_ids = [s.id for s in context.sources] if context.sources else source_ids
+        db = Database.open(paths.db_path)
+        try:
+            from insights.chat.save import save_one_shot_qa
+
+            conv_id = save_one_shot_qa(
+                db,
+                source_ids=used_source_ids,
+                question=question,
+                answer=resp.text,
+                provider=resp.provider,
+                model=resp.model,
+                usage=resp.usage,
+            )
+        finally:
+            db.close()
+
+        console.print(f"\nConversation: {conv_id}", markup=False, highlight=False)
+        console.print(
+            f'Resume: uv run insights --app-dir "{paths.app_dir}" chat --conversation {conv_id}',
+            markup=False,
+            highlight=False,
         )
-    finally:
-        db.close()
-
-    console.print(f"\nConversation: {conv_id}", markup=False, highlight=False)
-    console.print(
-        f'Resume: uv run insights --app-dir "{paths.app_dir}" chat --conversation {conv_id}',
-        markup=False,
-        highlight=False,
-    )
-    # FULL-only context: no chunk citations.
 
 
 @app.command()
@@ -1176,6 +1227,9 @@ def export_text(
         typer.Option("--backend", help="Backend for URL ingestion when ingesting."),
     ] = IngestBackend.DOCLING,
     refresh: Annotated[bool, typer.Option("--refresh", help="Force re-ingestion.")] = False,
+    no_store: Annotated[
+        bool, typer.Option("--no-store", help="Don't persist source to DB (reuse cache if exists).")
+    ] = False,
     name: Annotated[str | None, typer.Option("--name", help="Optional base filename override.")] = None,
     include_plain: Annotated[
         bool,
@@ -1221,6 +1275,8 @@ def export_text(
         if format:
             fmt = format.lower().strip()
             if fmt in ("json",):
+                if no_store:
+                    err_console.print("Warning: --no-store not yet supported for JSON export", markup=False, highlight=False)
                 path = export_source_json(
                     paths=paths,
                     source_ref=ref,
@@ -1233,6 +1289,8 @@ def export_text(
                 )
                 written.append(path)
             elif fmt in ("html",):
+                if no_store:
+                    err_console.print("Warning: --no-store not yet supported for HTML export", markup=False, highlight=False)
                 path = export_source_html(
                     paths=paths,
                     source_ref=ref,
@@ -1252,6 +1310,7 @@ def export_text(
                     out_file=out_file,
                     backend=backend,
                     refresh=refresh,
+                    no_store=no_store,
                     name=name,
                     include_plain=False,
                     include_markdown=True,
@@ -1265,6 +1324,7 @@ def export_text(
                     out_file=None,  # txt doesn't support out_file
                     backend=backend,
                     refresh=refresh,
+                    no_store=no_store,
                     name=name,
                     include_plain=True,
                     include_markdown=False,
@@ -1284,6 +1344,7 @@ def export_text(
                 out_file=out_file,
                 backend=backend,
                 refresh=refresh,
+                no_store=no_store,
                 name=name,
                 include_plain=include_plain,
                 include_markdown=include_markdown,

@@ -3,11 +3,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from insights.storage.db import Database
 from insights.storage.models import Source
 from insights.utils import estimate_tokens, truncate_to_tokens
+
+if TYPE_CHECKING:
+    from insights.ingest import EphemeralDocument
 
 ProgressFn = Callable[[str], None]
 
@@ -41,7 +44,8 @@ class ContextBuildResult:
 def build_context(
     *,
     db: Database,
-    source_ids: list[str],
+    source_ids: list[str] | None = None,
+    ephemeral_docs: list[EphemeralDocument] | None = None,
     question: str,
     extractor_preference: list[str] | None = None,
     max_context_tokens: int = 12000,
@@ -52,13 +56,18 @@ def build_context(
 
     - Per-document head trim: INSIGHTS_MAX_CONTEXT_CHARS (default 400,000).
     - Total token trim: --max-context-tokens (tiktoken).
+    - Supports both DB sources (via source_ids) and ephemeral documents.
     """
     _ = question  # reserved for future prompt-shaping; kept for call-site compatibility
     _ = progress
 
+    source_ids = source_ids or []
+    ephemeral_docs = ephemeral_docs or []
+
     extractor_preference = extractor_preference or ["docling", "firecrawl", "assemblyai"]
     max_context_chars = _env_int("INSIGHTS_MAX_CONTEXT_CHARS", 400_000)
 
+    # Process DB sources.
     sources: list[Source] = []
     for sid in source_ids:
         s = db.get_source_by_id(sid)
@@ -66,7 +75,7 @@ def build_context(
             raise KeyError(f"Unknown source id: {sid}")
         sources.append(s)
 
-    docs = db.get_documents_for_sources_latest(source_ids=source_ids, extractor_preference=extractor_preference)
+    docs = db.get_documents_for_sources_latest(source_ids=source_ids, extractor_preference=extractor_preference) if source_ids else []
     raw_by_source: dict[str, dict[str, Any]] = {d["source_id"]: d for d in docs}
 
     # Apply per-document trim (head-only) for FULL context building.
@@ -91,11 +100,21 @@ def build_context(
             raise RuntimeError(f"No extracted document found for source {sid}. Run `insights ingest` first.")
         total_tokens += int(d["token_count"])
 
+    # Build context parts from DB sources.
     parts: list[str] = []
     for s in sources:
         d = doc_by_source[s.id]
         title = s.title or s.locator
         parts.append(f"[Source: {title} | id={s.id} | locator={s.locator}]\n{d['plain_text']}".strip())
+
+    # Add ephemeral documents.
+    for edoc in ephemeral_docs:
+        plain = edoc.plain_text
+        trimmed, _ = _trim_head(plain, max_chars=max_context_chars)
+        title = edoc.title or edoc.locator
+        parts.append(f"[Source: {title} | locator={edoc.locator}]\n{trimmed}".strip())
+        total_tokens += int(estimate_tokens(trimmed))
+
     context_text = "\n\n".join(parts).strip()
 
     # Enforce overall token budget for FULL context.
