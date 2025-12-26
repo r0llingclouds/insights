@@ -35,7 +35,7 @@ def _pick_llm(provider: str, model: str | None):
     if p == "openai":
         return OpenAIClient(), (model or "gpt-4o-mini")
     if p == "anthropic":
-        return AnthropicClient(), (model or "claude-3-5-sonnet-latest")
+        return AnthropicClient(), (model or "claude-sonnet-4-5-20250929")
     raise ValueError("provider must be 'openai' or 'anthropic'")
 
 
@@ -333,7 +333,6 @@ def run_chat(
             user_payload = f"Sources context:\n\n{context.context_text}\n\nUser question:\n{text}".strip()
             messages.append(ChatMessage(role="user", content=user_payload))
 
-            # BUG: Crashes when using streaming and chat
             if config.stream:
                 # Stream response tokens as they arrive
                 full_text_parts: list[str] = []

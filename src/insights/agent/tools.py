@@ -50,7 +50,7 @@ def _pick_llm(provider: Provider, model: str | None):
     if provider == "openai":
         return OpenAIClient(), (model or "gpt-4o-mini")
     if provider == "anthropic":
-        return AnthropicClient(), (model or "claude-3-5-sonnet-latest")
+        return AnthropicClient(), (model or "claude-sonnet-4-5-20250929")
     raise ValueError("provider must be 'openai' or 'anthropic'")
 
 

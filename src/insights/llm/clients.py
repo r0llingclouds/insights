@@ -47,6 +47,10 @@ class LLMClient(Protocol):
 def _raise_for_status(resp: httpx.Response) -> None:
     if resp.status_code < 400:
         return
+    # For streaming responses, the body hasn't been read yet.
+    # We must read it before accessing .json() or .text
+    if not hasattr(resp, "_content"):
+        resp.read()
     try:
         payload = resp.json()
         detail = json.dumps(payload, ensure_ascii=False)

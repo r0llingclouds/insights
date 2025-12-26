@@ -1090,7 +1090,7 @@ def ask(
         used_model = model or "gpt-4o-mini"
     elif provider_norm == "anthropic":
         client = AnthropicClient()
-        used_model = model or "claude-3-5-sonnet-latest"
+        used_model = model or "claude-sonnet-4-5-20250929"
     else:
         raise typer.BadParameter("provider must be 'openai' or 'anthropic'")
 

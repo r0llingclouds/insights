@@ -86,7 +86,7 @@ Example `config.toml`:
 ```toml
 [defaults]
 provider = "anthropic"
-model = "claude-3-5-sonnet-latest"
+model = "claude-sonnet-4-5-20250929"
 max_context_tokens = 12000
 max_output_tokens = 800
 temperature = 0.2
@@ -386,7 +386,7 @@ Override the model:
 
 ```bash
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summarize." --provider openai --model gpt-4o-mini
-uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summarize." --provider anthropic --model claude-3-5-sonnet-latest
+uv run insights --app-dir "$INSIGHTS_APP_DIR" ask -s /path/to/file.pdf "Summarize." --provider anthropic --model claude-sonnet-4-5-20250929
 ```
 
 Note: By default, Insights builds a FULL source context. Use `--retrieval` for RAG mode (semantic search over chunks).
