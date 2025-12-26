@@ -49,7 +49,11 @@ def _resolve_or_ingest_source(
 ) -> Source:
     existing = db.get_source_by_id(ref)
     if existing:
-        console.print(f"(cache) {existing.kind.value} {existing.locator}", markup=False, highlight=False)
+        console.print(
+            f"(cache) {existing.kind.value} {existing.locator}",
+            markup=False,
+            highlight=False,
+        )
         return existing
     result = ingest_source(
         db=db,
@@ -120,7 +124,9 @@ def run_chat(
         conv_id = conv.id
         console.print(f"New conversation: {conv_id}")
         if not sources and not config.retrieval:
-            raise ValueError("Provide at least one source when starting a new conversation (or use --retrieval).")
+            raise ValueError(
+                "Provide at least one source when starting a new conversation (or use --retrieval)."
+            )
 
     # Bind initial sources if provided.
     for ref in sources:
@@ -188,7 +194,9 @@ def run_chat(
                         console.print("No sources bound.")
                     else:
                         for s in bound:
-                            console.print(f"- {s.id} {s.kind.value} {s.title or ''} {s.locator}")
+                            console.print(
+                                f"- {s.id} {s.kind.value} {s.title or ''} {s.locator}"
+                            )
                     continue
                 if cmd == "/add":
                     if not arg:
@@ -201,7 +209,9 @@ def run_chat(
                         backend=config.backend,
                         refresh=config.refresh_sources,
                     )
-                    db.bind_source_to_conversation(conversation_id=conv_id, source_id=s.id)
+                    db.bind_source_to_conversation(
+                        conversation_id=conv_id, source_id=s.id
+                    )
                     console.print(f"Added source: {s.id}")
                     continue
                 if cmd == "/new":
@@ -210,7 +220,9 @@ def run_chat(
                     conv = db.create_conversation(title=None)
                     conv_id = conv.id
                     for s in bound:
-                        db.bind_source_to_conversation(conversation_id=conv_id, source_id=s.id)
+                        db.bind_source_to_conversation(
+                            conversation_id=conv_id, source_id=s.id
+                        )
                     console.print(f"New conversation: {conv_id}")
                     continue
                 if cmd == "/save":
@@ -229,17 +241,25 @@ def run_chat(
                     console.print(f"Exported: {path}")
                     continue
                 if cmd == "/export-md":
-                    out_dir = Path(arg).expanduser().resolve() if arg else (Path.home() / "Downloads").expanduser().resolve()
+                    out_dir = (
+                        Path(arg).expanduser().resolve()
+                        if arg
+                        else (Path.home() / "Downloads").expanduser().resolve()
+                    )
                     out_dir.mkdir(parents=True, exist_ok=True)
                     bound = db.list_conversation_sources(conv_id)
                     if not bound:
-                        console.print("No sources bound.", markup=False, highlight=False)
+                        console.print(
+                            "No sources bound.", markup=False, highlight=False
+                        )
                         continue
                     from insights.config import Paths
                     from insights.text_export import export_source_text
 
                     # Build minimal Paths for exporter.
-                    paths = Paths(app_dir=db.path.parent, db_path=db.path, cache_dir=cache_dir)
+                    paths = Paths(
+                        app_dir=db.path.parent, db_path=db.path, cache_dir=cache_dir
+                    )
                     progress = make_progress_printer(prefix="insights")
                     for s in bound:
                         written = export_source_text(
@@ -313,6 +333,7 @@ def run_chat(
             user_payload = f"Sources context:\n\n{context.context_text}\n\nUser question:\n{text}".strip()
             messages.append(ChatMessage(role="user", content=user_payload))
 
+            # BUG: Crashes when using streaming and chat
             if config.stream:
                 # Stream response tokens as they arrive
                 full_text_parts: list[str] = []
@@ -351,5 +372,3 @@ def run_chat(
                     usage=resp.usage,
                 )
                 console.print(resp.text, markup=False, highlight=False, soft_wrap=True)
-
-
