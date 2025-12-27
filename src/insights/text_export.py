@@ -23,12 +23,14 @@ class ExportFormat(str, Enum):
 
 
 def _get_source_url(kind: SourceKind, locator: str) -> str | None:
-    """Get the source URL for web-based sources (YouTube, tweets, URLs)."""
+    """Get the source URL for web-based sources (YouTube, tweets, URLs, LinkedIn)."""
     if kind == SourceKind.YOUTUBE:
         return f"https://www.youtube.com/watch?v={locator}"
     elif kind == SourceKind.TWEET:
         return locator  # Already full URL
     elif kind == SourceKind.URL:
+        return locator  # Already full URL
+    elif kind == SourceKind.LINKEDIN:
         return locator  # Already full URL
     return None  # Files don't have URLs
 

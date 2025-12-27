@@ -188,6 +188,25 @@ def ingest(
             title=title,
             summary_progress=summary_progress,
         )
+    if detected.kind == SourceKind.LINKEDIN:
+        # LinkedIn uses same extraction as URLs (docling/firecrawl)
+        if url_backend == IngestBackend.DOCLING:
+            return _ingest_url_docling(
+                db=db,
+                detected=detected,
+                refresh=refresh,
+                title=title,
+                summary_progress=summary_progress,
+            )
+        if url_backend == IngestBackend.FIRECRAWL:
+            return _ingest_url_firecrawl(
+                db=db,
+                detected=detected,
+                refresh=refresh,
+                title=title,
+                summary_progress=summary_progress,
+            )
+        raise ValueError(f"Unsupported URL backend: {url_backend}")
     raise ValueError(f"Unsupported source kind: {detected.kind.value}")
 
 
@@ -287,7 +306,7 @@ def _ingest_url_docling(
     summary_progress: Callable[[str], None] | None,
 ) -> IngestResult:
     url = detected.locator
-    source = db.upsert_source(kind=SourceKind.URL, locator=url, title=title)
+    source = db.upsert_source(kind=detected.kind, locator=url, title=title)
     extractor = "docling"
 
     if not refresh:
@@ -359,7 +378,7 @@ def _ingest_url_firecrawl(
     summary_progress: Callable[[str], None] | None,
 ) -> IngestResult:
     url = detected.locator
-    source = db.upsert_source(kind=SourceKind.URL, locator=url, title=title)
+    source = db.upsert_source(kind=detected.kind, locator=url, title=title)
     extractor = "firecrawl"
 
     if not refresh:
@@ -683,6 +702,13 @@ def extract_ephemeral(
         )
     if detected.kind == SourceKind.TWEET:
         return _extract_tweet_ephemeral(detected=detected, progress=progress)
+    if detected.kind == SourceKind.LINKEDIN:
+        # LinkedIn uses same extraction as URLs (docling/firecrawl)
+        return _extract_url_ephemeral(
+            detected=detected,
+            url_backend=url_backend,
+            progress=progress,
+        )
     raise ValueError(f"Unsupported source kind: {detected.kind.value}")
 
 
@@ -745,7 +771,7 @@ def _extract_url_ephemeral(
     return EphemeralResult(
         document=EphemeralDocument(
             locator=url,
-            kind=SourceKind.URL,
+            kind=detected.kind,
             title=detected.display_title,
             markdown=markdown,
             plain_text=plain,

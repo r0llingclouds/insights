@@ -125,6 +125,13 @@ def _fallback_title(*, kind: SourceKind, locator: str) -> str:
         match = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/", loc)
         username = match.group(1) if match else "unknown"
         return _clean_title(f"Tweet by @{username}")
+    if kind == SourceKind.LINKEDIN:
+        # Extract author from LinkedIn post URL (e.g., linkedin.com/posts/author-name_...)
+        match = re.search(r"linkedin\.com/posts/([^_/?]+)", loc)
+        if match:
+            author = match.group(1).replace("-", " ").title()
+            return _clean_title(f"LinkedIn post by {author}")
+        return _clean_title("LinkedIn post")
     return _clean_title(loc or "Untitled")
 
 

@@ -1,6 +1,6 @@
 ### Insights (terminal app)
 
-Ingest **local documents**, **web pages**, **YouTube videos**, and **tweets** into cached plain text, then run **Q&A / chat** over the sources using **OpenAI** or **Anthropic**.
+Ingest **local documents**, **web pages**, **YouTube videos**, **tweets**, and **LinkedIn posts** into cached plain text, then run **Q&A / chat** over the sources using **OpenAI** or **Anthropic**.
 
 ---
 
@@ -121,6 +121,7 @@ Many commands accept a "source ref", which can be:
 - **URL**: `https://example.com/article`
 - **YouTube URL**: `https://www.youtube.com/watch?v=VIDEO_ID` (internally stored as video id)
 - **Tweet URL**: `https://x.com/username/status/1234567890` (supports x.com and twitter.com)
+- **LinkedIn URL**: `https://linkedin.com/posts/username_post-id` (auto-detected)
 - **local file path**: `~/Desktop/onepager.pdf`
 - **basename / title fragment**: `onepager.pdf` (if ambiguous, you'll be prompted to pick one)
 
@@ -320,6 +321,12 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest "https://x.com/username/sta
 
 Note: Tweet ingestion uses [twitterapi.io](https://twitterapi.io) if `TWITTERAPI_KEY` is set, otherwise falls back to Twitter's free oEmbed API (limited metadata).
 
+Ingest a **LinkedIn post** (auto-detected from linkedin.com URLs):
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest "https://linkedin.com/posts/username_post-id"
+```
+
 Force re-ingestion:
 
 ```bash
@@ -327,7 +334,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest /path/to/file.pdf --refresh
 ```
 
 Ingest options:
-- `--type auto|file|url|youtube|tweet`
+- `--type auto|file|url|youtube|tweet|linkedin`
 - `--backend docling|firecrawl` (URLs)
 - `--refresh`
 - `--title "..."` (optional title override)
@@ -345,6 +352,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind file
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind url
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind youtube
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind tweet
+uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind linkedin
 ```
 
 JSON output:
@@ -354,7 +362,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --json
 ```
 
 Sources options:
-- `--kind file|url|youtube|tweet`
+- `--kind file|url|youtube|tweet|linkedin`
 - `--limit N`
 - `--json` (includes `description`)
 - `--show-description` (table view; truncated)
