@@ -10,6 +10,9 @@ class SourceKind(StrEnum):
     FILE = "file"
     URL = "url"
     YOUTUBE = "youtube"
+    # TODO: Add TWEET = "tweet" for Twitter/X post ingestion
+    # NOTE: https://docs.twitterapi.io/api-reference/endpoint/get_tweet_by_ids
+    # NOTE: https://claude.ai/chat/8ea212ed-7e4a-4ee4-a0ab-442c83fac2a6
 
 
 class MessageRole(StrEnum):
@@ -59,5 +62,3 @@ class Message:
     provider: str | None
     model: str | None
     usage: dict[str, Any] | None
-
-
