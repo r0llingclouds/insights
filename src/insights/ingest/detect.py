@@ -59,6 +59,13 @@ def is_linkedin_url(url: str) -> bool:
     return host in {"linkedin.com", "www.linkedin.com"} or host.endswith(".linkedin.com")
 
 
+def is_github_url(url: str) -> bool:
+    """Check if URL is a GitHub URL."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return host in {"github.com", "www.github.com"} or host.endswith(".github.com")
+
+
 def extract_youtube_video_id(url: str) -> str | None:
     parsed = urlparse(url)
     host = (parsed.netloc or "").lower()
@@ -86,13 +93,13 @@ def detect_source(value: str, *, forced_type: str | None = None) -> DetectedSour
 
     forced_type:
       - None or 'auto'
-      - 'file' | 'url' | 'youtube' | 'tweet' | 'linkedin'
+      - 'file' | 'url' | 'youtube' | 'tweet' | 'linkedin' | 'github'
     """
     ft = (forced_type or "auto").lower()
-    if ft not in {"auto", "file", "url", "youtube", "tweet", "linkedin"}:
-        raise ValueError("forced_type must be one of: auto, file, url, youtube, tweet, linkedin")
+    if ft not in {"auto", "file", "url", "youtube", "tweet", "linkedin", "github"}:
+        raise ValueError("forced_type must be one of: auto, file, url, youtube, tweet, linkedin, github")
 
-    if ft in {"url", "youtube", "tweet", "linkedin"} or (ft == "auto" and is_url(value)):
+    if ft in {"url", "youtube", "tweet", "linkedin", "github"} or (ft == "auto" and is_url(value)):
         url = canonicalize_url(value)
         # Check for tweet first (before generic URL)
         if ft == "tweet" or (ft == "auto" and is_tweet_url(url)):
@@ -104,6 +111,11 @@ def detect_source(value: str, *, forced_type: str | None = None) -> DetectedSour
             if not is_linkedin_url(url):
                 raise ValueError("Could not parse LinkedIn URL")
             return DetectedSource(kind=SourceKind.LINKEDIN, locator=url, display_title=None)
+        # Check for GitHub (before generic URL)
+        if ft == "github" or (ft == "auto" and is_github_url(url)):
+            if not is_github_url(url):
+                raise ValueError("Could not parse GitHub URL")
+            return DetectedSource(kind=SourceKind.GITHUB, locator=url, display_title=None)
         if ft == "youtube" or (ft == "auto" and extract_youtube_video_id(url)):
             vid = extract_youtube_video_id(url)
             if not vid:

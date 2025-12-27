@@ -132,6 +132,13 @@ def _fallback_title(*, kind: SourceKind, locator: str) -> str:
             author = match.group(1).replace("-", " ").title()
             return _clean_title(f"LinkedIn post by {author}")
         return _clean_title("LinkedIn post")
+    if kind == SourceKind.GITHUB:
+        # Extract owner/repo from GitHub URL (e.g., github.com/owner/repo)
+        match = re.search(r"github\.com/([^/]+)/([^/?#]+)", loc)
+        if match:
+            owner, repo = match.group(1), match.group(2)
+            return _clean_title(f"GitHub: {owner}/{repo}")
+        return _clean_title("GitHub page")
     return _clean_title(loc or "Untitled")
 
 

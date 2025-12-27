@@ -1,6 +1,6 @@
 ### Insights (terminal app)
 
-Ingest **local documents**, **web pages**, **YouTube videos**, **tweets**, and **LinkedIn posts** into cached plain text, then run **Q&A / chat** over the sources using **OpenAI** or **Anthropic**.
+Ingest **local documents**, **web pages**, **YouTube videos**, **tweets**, **LinkedIn posts**, and **GitHub repos** into cached plain text, then run **Q&A / chat** over the sources using **OpenAI** or **Anthropic**.
 
 ---
 
@@ -122,6 +122,7 @@ Many commands accept a "source ref", which can be:
 - **YouTube URL**: `https://www.youtube.com/watch?v=VIDEO_ID` (internally stored as video id)
 - **Tweet URL**: `https://x.com/username/status/1234567890` (supports x.com and twitter.com)
 - **LinkedIn URL**: `https://linkedin.com/posts/username_post-id` (auto-detected)
+- **GitHub URL**: `https://github.com/owner/repo` (auto-detected)
 - **local file path**: `~/Desktop/onepager.pdf`
 - **basename / title fragment**: `onepager.pdf` (if ambiguous, you'll be prompted to pick one)
 
@@ -327,6 +328,12 @@ Ingest a **LinkedIn post** (auto-detected from linkedin.com URLs):
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest "https://linkedin.com/posts/username_post-id"
 ```
 
+Ingest a **GitHub repo/page** (auto-detected from github.com URLs):
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest "https://github.com/owner/repo"
+```
+
 Force re-ingestion:
 
 ```bash
@@ -334,7 +341,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest /path/to/file.pdf --refresh
 ```
 
 Ingest options:
-- `--type auto|file|url|youtube|tweet|linkedin`
+- `--type auto|file|url|youtube|tweet|linkedin|github`
 - `--backend docling|firecrawl` (URLs)
 - `--refresh`
 - `--title "..."` (optional title override)
@@ -353,6 +360,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind url
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind youtube
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind tweet
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind linkedin
+uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind github
 ```
 
 JSON output:
@@ -362,7 +370,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --json
 ```
 
 Sources options:
-- `--kind file|url|youtube|tweet|linkedin`
+- `--kind file|url|youtube|tweet|linkedin|github`
 - `--limit N`
 - `--json` (includes `description`)
 - `--show-description` (table view; truncated)

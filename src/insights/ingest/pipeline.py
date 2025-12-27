@@ -207,6 +207,25 @@ def ingest(
                 summary_progress=summary_progress,
             )
         raise ValueError(f"Unsupported URL backend: {url_backend}")
+    if detected.kind == SourceKind.GITHUB:
+        # GitHub uses same extraction as URLs (docling/firecrawl)
+        if url_backend == IngestBackend.DOCLING:
+            return _ingest_url_docling(
+                db=db,
+                detected=detected,
+                refresh=refresh,
+                title=title,
+                summary_progress=summary_progress,
+            )
+        if url_backend == IngestBackend.FIRECRAWL:
+            return _ingest_url_firecrawl(
+                db=db,
+                detected=detected,
+                refresh=refresh,
+                title=title,
+                summary_progress=summary_progress,
+            )
+        raise ValueError(f"Unsupported URL backend: {url_backend}")
     raise ValueError(f"Unsupported source kind: {detected.kind.value}")
 
 
@@ -704,6 +723,13 @@ def extract_ephemeral(
         return _extract_tweet_ephemeral(detected=detected, progress=progress)
     if detected.kind == SourceKind.LINKEDIN:
         # LinkedIn uses same extraction as URLs (docling/firecrawl)
+        return _extract_url_ephemeral(
+            detected=detected,
+            url_backend=url_backend,
+            progress=progress,
+        )
+    if detected.kind == SourceKind.GITHUB:
+        # GitHub uses same extraction as URLs (docling/firecrawl)
         return _extract_url_ephemeral(
             detected=detected,
             url_backend=url_backend,

@@ -12,6 +12,7 @@ class SourceKind(StrEnum):
     YOUTUBE = "youtube"
     TWEET = "tweet"
     LINKEDIN = "linkedin"
+    GITHUB = "github"
 
 
 class MessageRole(StrEnum):

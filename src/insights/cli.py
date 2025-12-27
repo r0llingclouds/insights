@@ -579,7 +579,7 @@ def ingest(
     input_value: Annotated[str, typer.Argument(help="Path to file or URL.")],
     type: Annotated[
         str,
-        typer.Option("--type", help="auto|file|url|youtube|tweet|linkedin"),
+        typer.Option("--type", help="auto|file|url|youtube|tweet|linkedin|github"),
     ] = "auto",
     backend: Annotated[
         IngestBackend,
@@ -656,7 +656,7 @@ def list_sources(
     ctx: typer.Context,
     kind: Annotated[
         str | None,
-        typer.Option("--kind", help="Filter by kind: file|url|youtube|tweet|linkedin"),
+        typer.Option("--kind", help="Filter by kind: file|url|youtube|tweet|linkedin|github"),
     ] = None,
     limit: Annotated[int, typer.Option("--limit", help="Max rows to show.")] = 100,
     show_description: Annotated[
