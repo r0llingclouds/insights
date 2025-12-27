@@ -77,7 +77,7 @@ def generate_description(
     return desc
 
 
-DEFAULT_EXTRACTOR_PREFERENCE: list[str] = ["firecrawl", "docling", "assemblyai"]
+DEFAULT_EXTRACTOR_PREFERENCE: list[str] = ["firecrawl", "docling", "assemblyai", "twitterapi"]
 
 
 _RE_SENT_END = re.compile(r"([.!?])\s+")

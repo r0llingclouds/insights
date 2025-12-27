@@ -1,6 +1,6 @@
 ### Insights (terminal app)
 
-Ingest **local documents**, **web pages**, and **YouTube videos** into cached plain text, then run **Q&A / chat** over the sources using **OpenAI** or **Anthropic**.
+Ingest **local documents**, **web pages**, **YouTube videos**, and **tweets** into cached plain text, then run **Q&A / chat** over the sources using **OpenAI** or **Anthropic**.
 
 ---
 
@@ -69,6 +69,7 @@ export OPENAI_API_KEY="..."
 export ANTHROPIC_API_KEY="..."
 export ASSEMBLYAI_API_KEY="..."
 export FIRECRAWL_API_KEY="..."
+export TWITTERAPI_KEY="..."  # Optional: for tweet ingestion (twitterapi.io)
 ```
 
 Optional: you can also store them in a `.env` file in your **current directory** or inside your **app dir** (e.g. `/tmp/insights-test/.env`).
@@ -115,12 +116,13 @@ Important: `--yes` is a **global** flag, so it must appear **before** the quoted
 
 ### Source references (how to refer to a source)
 
-Many commands accept a “source ref”, which can be:
+Many commands accept a "source ref", which can be:
 - **source id**: `830eb7dfaaac428a87fb2dae2e80a2a5`
 - **URL**: `https://example.com/article`
 - **YouTube URL**: `https://www.youtube.com/watch?v=VIDEO_ID` (internally stored as video id)
+- **Tweet URL**: `https://x.com/username/status/1234567890` (supports x.com and twitter.com)
 - **local file path**: `~/Desktop/onepager.pdf`
-- **basename / title fragment**: `onepager.pdf` (if ambiguous, you’ll be prompted to pick one)
+- **basename / title fragment**: `onepager.pdf` (if ambiguous, you'll be prompted to pick one)
 
 ### Natural-language agent (Anthropic tool-use)
 
@@ -310,6 +312,14 @@ Ingest a **YouTube video** (yt-dlp → AssemblyAI transcript):
 uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
+Ingest a **tweet** (auto-detected from x.com/twitter.com URLs):
+
+```bash
+uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest "https://x.com/username/status/1234567890"
+```
+
+Note: Tweet ingestion uses [twitterapi.io](https://twitterapi.io) if `TWITTERAPI_KEY` is set, otherwise falls back to Twitter's free oEmbed API (limited metadata).
+
 Force re-ingestion:
 
 ```bash
@@ -317,7 +327,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" ingest /path/to/file.pdf --refresh
 ```
 
 Ingest options:
-- `--type auto|file|url|youtube`
+- `--type auto|file|url|youtube|tweet`
 - `--backend docling|firecrawl` (URLs)
 - `--refresh`
 - `--title "..."` (optional title override)
@@ -334,6 +344,7 @@ Filter by kind:
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind file
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind url
 uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind youtube
+uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --kind tweet
 ```
 
 JSON output:
@@ -343,7 +354,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" sources --json
 ```
 
 Sources options:
-- `--kind file|url|youtube`
+- `--kind file|url|youtube|tweet`
 - `--limit N`
 - `--json` (includes `description`)
 - `--show-description` (table view; truncated)

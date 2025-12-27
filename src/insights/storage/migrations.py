@@ -141,6 +141,36 @@ MIGRATIONS: list[Migration] = [
             "DROP TABLE IF EXISTS document_chunking_meta;",
         ),
     ),
+    Migration(
+        version=7,
+        name="add_tweet_source_kind",
+        statements=(
+            # Add 'tweet' to the source kind CHECK constraint.
+            # SQLite doesn't support ALTER TABLE to modify CHECK constraints,
+            # so we recreate the table with the updated constraint.
+            "PRAGMA foreign_keys = OFF;",
+            """
+            CREATE TABLE sources_new (
+              id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL CHECK (kind IN ('file', 'url', 'youtube', 'tweet')),
+              locator TEXT NOT NULL,
+              title TEXT,
+              description TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(kind, locator)
+            );
+            """,
+            """
+            INSERT INTO sources_new (id, kind, locator, title, description, created_at, updated_at)
+            SELECT id, kind, locator, title, description, created_at, updated_at FROM sources;
+            """,
+            "DROP TABLE sources;",
+            "ALTER TABLE sources_new RENAME TO sources;",
+            "CREATE INDEX IF NOT EXISTS idx_sources_kind_updated_at ON sources(kind, updated_at);",
+            "PRAGMA foreign_keys = ON;",
+        ),
+    ),
 ]
 
 

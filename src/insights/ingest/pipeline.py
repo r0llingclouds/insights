@@ -9,6 +9,7 @@ from typing import Callable
 from insights.ingest.detect import DetectedSource, detect_source
 from insights.ingest.docling_extractor import extract_markdown_with_docling
 from insights.ingest.firecrawl_extractor import extract_markdown_with_firecrawl
+from insights.ingest.tweet_extractor import fetch_tweet
 from insights.ingest.youtube_extractor import download_youtube_audio, transcribe_with_assemblyai
 from insights.storage.db import Database
 from insights.storage.models import Source, SourceKind, SourceVersion
@@ -177,6 +178,14 @@ def ingest(
             refresh=refresh,
             title=title,
             cache_dir=cache_dir,
+            summary_progress=summary_progress,
+        )
+    if detected.kind == SourceKind.TWEET:
+        return _ingest_tweet(
+            db=db,
+            detected=detected,
+            refresh=refresh,
+            title=title,
             summary_progress=summary_progress,
         )
     raise ValueError(f"Unsupported source kind: {detected.kind.value}")
@@ -521,6 +530,101 @@ def _ingest_youtube_assemblyai(
         raise RuntimeError(msg) from e
 
 
+def _ingest_tweet(
+    *,
+    db: Database,
+    detected: DetectedSource,
+    refresh: bool,
+    title: str | None,
+    summary_progress: Callable[[str], None] | None,
+) -> IngestResult:
+    """Ingest a tweet from Twitter/X."""
+    tweet_url = detected.locator
+    source = db.upsert_source(kind=SourceKind.TWEET, locator=tweet_url, title=title)
+    extractor = "twitterapi"
+
+    if not refresh:
+        existing = db.get_latest_source_version(source_id=source.id, extractor=extractor)
+        if existing and existing.status == "ok":
+            doc_id = db.get_document_id_by_source_version(existing.id)
+            if doc_id:
+                plain = db.get_document_plain_text_by_source_version(existing.id) or ""
+                _require_metadata(
+                    db=db,
+                    source_id=source.id,
+                    source_version_id=existing.id,
+                    plain_text=plain,
+                    force=False,
+                    progress=summary_progress,
+                )
+                return IngestResult(
+                    source=source,
+                    source_version=existing,
+                    document_id=doc_id,
+                    reused_cache=True,
+                )
+
+    try:
+        _p(summary_progress, f"fetching tweet: {tweet_url}")
+        tweet_data = fetch_tweet(tweet_url)
+        _p(summary_progress, "fetching tweet: done")
+
+        # Build markdown content with metadata
+        markdown_parts = [f"# Tweet by @{tweet_data.author_username}"]
+        if tweet_data.author_name:
+            markdown_parts.append(f"**{tweet_data.author_name}**")
+        markdown_parts.append("")
+        markdown_parts.append(tweet_data.text)
+        markdown_parts.append("")
+        markdown_parts.append("---")
+        markdown_parts.append(f"Source: [{tweet_url}]({tweet_url})")
+        if tweet_data.created_at:
+            markdown_parts.append(f"Posted: {tweet_data.created_at.isoformat()}")
+        if tweet_data.likes is not None:
+            markdown_parts.append(f"Likes: {tweet_data.likes}")
+        if tweet_data.retweets is not None:
+            markdown_parts.append(f"Retweets: {tweet_data.retweets}")
+
+        markdown = "\n".join(markdown_parts)
+        plain = tweet_data.text  # Use raw tweet text for title/summary generation
+        content_hash = sha256_text(markdown)
+        token_est = estimate_tokens(plain)
+
+        version = db.create_source_version(
+            source_id=source.id,
+            content_hash=content_hash,
+            extractor=extractor,
+            status="ok",
+            error=None,
+        )
+        doc_id = db.upsert_document(
+            source_version_id=version.id,
+            markdown=markdown,
+            plain_text=plain,
+            token_count=token_est,
+        )
+        _require_metadata(
+            db=db,
+            source_id=source.id,
+            source_version_id=version.id,
+            plain_text=plain,
+            force=bool(refresh),
+            progress=summary_progress,
+        )
+        return IngestResult(source=source, source_version=version, document_id=doc_id, reused_cache=False)
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        logger.exception("Failed to ingest tweet")
+        db.create_source_version(
+            source_id=source.id,
+            content_hash=sha256_text(tweet_url),
+            extractor=extractor,
+            status="error",
+            error=msg,
+        )
+        raise RuntimeError(msg) from e
+
+
 def extract_ephemeral(
     *,
     db: Database,
@@ -548,7 +652,7 @@ def extract_ephemeral(
         # Source exists - return cached content.
         docs = db.get_documents_for_sources_latest(
             source_ids=[existing_source.id],
-            extractor_preference=["docling", "firecrawl", "assemblyai"],
+            extractor_preference=["docling", "firecrawl", "assemblyai", "twitterapi"],
         )
         if docs:
             d = docs[0]
@@ -577,6 +681,8 @@ def extract_ephemeral(
             cache_dir=cache_dir,
             progress=progress,
         )
+    if detected.kind == SourceKind.TWEET:
+        return _extract_tweet_ephemeral(detected=detected, progress=progress)
     raise ValueError(f"Unsupported source kind: {detected.kind.value}")
 
 
@@ -677,6 +783,44 @@ def _extract_youtube_ephemeral(
             locator=video_id,
             kind=SourceKind.YOUTUBE,
             title=yt_title or detected.display_title,
+            markdown=markdown,
+            plain_text=plain,
+            token_count=token_est,
+        ),
+        source=None,
+        source_version=None,
+        from_cache=False,
+    )
+
+
+def _extract_tweet_ephemeral(
+    *,
+    detected: DetectedSource,
+    progress: Callable[[str], None] | None,
+) -> EphemeralResult:
+    """Extract tweet content in-memory without DB storage."""
+    tweet_url = detected.locator
+
+    _p(progress, f"fetching tweet: {tweet_url}")
+    tweet_data = fetch_tweet(tweet_url)
+    _p(progress, "fetching tweet: done")
+
+    # Build markdown content
+    markdown_parts = [f"# Tweet by @{tweet_data.author_username}"]
+    if tweet_data.author_name:
+        markdown_parts.append(f"**{tweet_data.author_name}**")
+    markdown_parts.append("")
+    markdown_parts.append(tweet_data.text)
+    markdown = "\n".join(markdown_parts)
+
+    plain = tweet_data.text
+    token_est = estimate_tokens(plain)
+
+    return EphemeralResult(
+        document=EphemeralDocument(
+            locator=tweet_url,
+            kind=SourceKind.TWEET,
+            title=f"Tweet by @{tweet_data.author_username}",
             markdown=markdown,
             plain_text=plain,
             token_count=token_est,

@@ -77,7 +77,7 @@ def generate_title(
     return title
 
 
-DEFAULT_EXTRACTOR_PREFERENCE: list[str] = ["firecrawl", "docling", "assemblyai"]
+DEFAULT_EXTRACTOR_PREFERENCE: list[str] = ["firecrawl", "docling", "assemblyai", "twitterapi"]
 
 
 _RE_SLUG_SPLIT = re.compile(r"[-_]+")
@@ -120,6 +120,11 @@ def _fallback_title(*, kind: SourceKind, locator: str) -> str:
         return _clean_title(loc or "Untitled")
     if kind == SourceKind.YOUTUBE:
         return _clean_title(f"YouTube {loc}" if loc else "YouTube")
+    if kind == SourceKind.TWEET:
+        # Extract username from URL for fallback
+        match = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/", loc)
+        username = match.group(1) if match else "unknown"
+        return _clean_title(f"Tweet by @{username}")
     return _clean_title(loc or "Untitled")
 
 
@@ -159,10 +164,14 @@ def ensure_source_title(
     title = ""
     if plain and plain.strip():
         try:
+            # Use haiku specifically for tweets (fast and cost-effective for short content)
+            used_model = model
+            if src.kind == SourceKind.TWEET and not model:
+                used_model = "claude-haiku-4-5-20251001"
             title = generate_title(
                 content=plain,
                 provider=provider,
-                model=model,
+                model=used_model,
                 max_content_chars=max_content_chars,
             )
         except Exception:

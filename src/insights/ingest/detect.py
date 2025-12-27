@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from insights.ingest.tweet_extractor import is_tweet_url
 from insights.storage.models import SourceKind
 
 
@@ -78,14 +79,19 @@ def detect_source(value: str, *, forced_type: str | None = None) -> DetectedSour
 
     forced_type:
       - None or 'auto'
-      - 'file' | 'url' | 'youtube'
+      - 'file' | 'url' | 'youtube' | 'tweet'
     """
     ft = (forced_type or "auto").lower()
-    if ft not in {"auto", "file", "url", "youtube"}:
-        raise ValueError("forced_type must be one of: auto, file, url, youtube")
+    if ft not in {"auto", "file", "url", "youtube", "tweet"}:
+        raise ValueError("forced_type must be one of: auto, file, url, youtube, tweet")
 
-    if ft in {"url", "youtube"} or (ft == "auto" and is_url(value)):
+    if ft in {"url", "youtube", "tweet"} or (ft == "auto" and is_url(value)):
         url = canonicalize_url(value)
+        # Check for tweet first (before generic URL)
+        if ft == "tweet" or (ft == "auto" and is_tweet_url(url)):
+            if not is_tweet_url(url):
+                raise ValueError("Could not parse tweet URL")
+            return DetectedSource(kind=SourceKind.TWEET, locator=url, display_title=None)
         if ft == "youtube" or (ft == "auto" and extract_youtube_video_id(url)):
             vid = extract_youtube_video_id(url)
             if not vid:
