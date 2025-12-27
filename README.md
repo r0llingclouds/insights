@@ -93,7 +93,7 @@ temperature = 0.2
 stream = true  # Enable streaming by default
 
 [agent]
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-5-20250929"
 max_steps = 10
 ```
 
@@ -107,7 +107,7 @@ CLI flags always override config file settings.
 
 Agent-related global options:
 - `--yes`: allow side effects for natural-language agent queries (ingest + export-to-file)
-- `--agent-model MODEL` (default `claude-sonnet-4-20250514`)
+- `--agent-model MODEL` (default `claude-sonnet-4-5-20250929`)
 - `--agent-max-steps N` (default 10)
 - `--agent-verbose`
 
@@ -152,7 +152,7 @@ uv run insights --app-dir "$INSIGHTS_APP_DIR" --yes "export text for https://kar
 ```
 
 Agent tuning:
-- `--agent-model claude-sonnet-4-20250514`
+- `--agent-model claude-sonnet-4-5-20250929`
 - `--agent-max-steps 10`
 - `--agent-verbose`
 - You can also use `agent` as an alias of `do`:
@@ -170,7 +170,7 @@ Insights stores an LLM-generated one-liner description for each source (`sources
 - Optional: override the default description model:
 
 ```bash
-export INSIGHTS_DESCRIBE_MODEL="claude-sonnet-4-20250514"
+export INSIGHTS_DESCRIBE_MODEL="claude-sonnet-4-5-20250929"
 ```
 
 - To backfill missing descriptions for existing sources:
@@ -193,7 +193,7 @@ If a source has no title, Insights will generate a short plain title (best-effor
 - Set a specific model for title generation:
 
 ```bash
-export INSIGHTS_TITLE_MODEL="claude-sonnet-4-20250514"
+export INSIGHTS_TITLE_MODEL="claude-sonnet-4-5-20250929"
 ```
 
 - Backfill missing titles for existing sources:
@@ -221,7 +221,7 @@ Important: summaries are generated from the **entire document/transcript**.
 Optional: override the default summary model:
 
 ```bash
-export INSIGHTS_SUMMARY_MODEL="claude-sonnet-4-20250514"
+export INSIGHTS_SUMMARY_MODEL="claude-sonnet-4-5-20250929"
 ```
 
 Optional tuning (whole-doc map-reduce):

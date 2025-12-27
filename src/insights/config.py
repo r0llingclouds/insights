@@ -28,7 +28,7 @@ class DefaultsConfig:
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-sonnet-4-5-20250929"
     max_steps: int = 10
 
 
@@ -51,7 +51,7 @@ def _parse_defaults(data: dict[str, Any]) -> DefaultsConfig:
 
 def _parse_agent(data: dict[str, Any]) -> AgentConfig:
     return AgentConfig(
-        model=data.get("model", "claude-sonnet-4-20250514"),
+        model=data.get("model", "claude-sonnet-4-5-20250929"),
         max_steps=data.get("max_steps", 10),
     )
 

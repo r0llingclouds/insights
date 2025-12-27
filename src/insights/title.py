@@ -50,7 +50,7 @@ def generate_title(
         else:
             used_model = pick_anthropic_model(
                 env_model=os.getenv("INSIGHTS_TITLE_MODEL"),
-                default_model="claude-sonnet-4-20250514",
+                default_model="claude-sonnet-4-5-20250929",
                 content_len=content_len,
                 large_model="claude-haiku-4-5-20251001",
             )

@@ -96,9 +96,9 @@ def _global_options(
         str,
         typer.Option(
             "--agent-model",
-            help="Anthropic model for the natural-language agent (default: claude-sonnet-4-20250514).",
+            help="Anthropic model for the natural-language agent (default: claude-sonnet-4-5-20250929).",
         ),
-    ] = "claude-sonnet-4-20250514",
+    ] = "claude-sonnet-4-5-20250929",
     agent_max_steps: Annotated[
         int,
         typer.Option("--agent-max-steps", help="Max tool-use steps for the agent (default 10)."),
@@ -161,7 +161,7 @@ def do(
     out = run_agent(
         query=text,
         paths=paths,
-        model=str(cfg.get("model") or "claude-sonnet-4-20250514"),
+        model=str(cfg.get("model") or "claude-sonnet-4-5-20250929"),
         max_steps=int(cfg.get("max_steps") or 10),
         verbose=bool(cfg.get("verbose") or False),
         allow_side_effects=allow_side_effects,

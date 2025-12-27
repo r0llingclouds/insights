@@ -183,7 +183,7 @@ def _build_llm(*, provider: str, model: str | None, content_len: int) -> _LLM:
         else:
             used_model = pick_anthropic_model(
                 env_model=os.getenv("INSIGHTS_SUMMARY_MODEL"),
-                default_model="claude-sonnet-4-20250514",
+                default_model="claude-sonnet-4-5-20250929",
                 content_len=content_len,
                 large_model="claude-haiku-4-5-20251001",
             )
