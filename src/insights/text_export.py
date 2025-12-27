@@ -22,6 +22,17 @@ class ExportFormat(str, Enum):
     HTML = "html"
 
 
+def _get_source_url(kind: SourceKind, locator: str) -> str | None:
+    """Get the source URL for web-based sources (YouTube, tweets, URLs)."""
+    if kind == SourceKind.YOUTUBE:
+        return f"https://www.youtube.com/watch?v={locator}"
+    elif kind == SourceKind.TWEET:
+        return locator  # Already full URL
+    elif kind == SourceKind.URL:
+        return locator  # Already full URL
+    return None  # Files don't have URLs
+
+
 def default_downloads_dir() -> Path:
     return (Path.home() / "Downloads").expanduser().resolve()
 
@@ -200,10 +211,16 @@ def export_source_text(
         stem = f"{safe_filename_base(base)}__{source_id or 'ephemeral'}"
 
         written: list[Path] = []
+        # Get source URL for web-based sources (prepend to exported content)
+        source_url = _get_source_url(source_kind, source_locator) if source_kind else None
+
         if include_markdown:
             md_path = (out_file.expanduser().resolve() if out_file else (out_dir_resolved / f"{stem}.md"))
             # Always write a markdown file; if markdown is empty, fall back to plain text/transcript.
             md_content = markdown or plain_text
+            # Prepend source URL for web-based sources
+            if source_url:
+                md_content = f"Source: {source_url}\n\n{md_content}"
             if progress is not None:
                 progress(f"writing export: {md_path}")
             md_path.write_text(md_content + ("\n" if md_content and not md_content.endswith("\n") else ""), encoding="utf-8")
@@ -211,10 +228,14 @@ def export_source_text(
 
         if include_plain:
             txt_path = out_dir_resolved / f"{stem}.txt"
+            # Prepend source URL for web-based sources
+            txt_content = plain_text
+            if source_url:
+                txt_content = f"Source: {source_url}\n\n{txt_content}"
             if progress is not None:
                 progress(f"writing export: {txt_path}")
             txt_path.write_text(
-                plain_text + ("\n" if plain_text and not plain_text.endswith("\n") else ""),
+                txt_content + ("\n" if txt_content and not txt_content.endswith("\n") else ""),
                 encoding="utf-8",
             )
             written.append(txt_path)
